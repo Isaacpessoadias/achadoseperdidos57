@@ -59,7 +59,7 @@ const uploadImage = async (uri, fileName) => {
   const result = await response.json();
 
   if (!response.ok || !result.secure_url) {
-    throw new Error('Não foi possível enviar a imagem.');
+    throw new Error(result.error?.message || `Cloudinary rejeitou o upload (${response.status}).`);
   }
 
   return result.secure_url;
@@ -254,7 +254,7 @@ export default function App() {
         }
       }
     } catch (error) {
-      setStatus({ type: 'error', text: 'Não foi possível salvar a foto. Tente novamente.' });
+        setStatus({ type: 'error', text: `Não foi possível salvar a foto: ${error?.message || 'erro desconhecido'}` });
     }
   };
 
@@ -525,7 +525,10 @@ export default function App() {
           setItemImage(null);
           setActiveView('found');
         } catch (e) {
-          setStatus({ type: 'error', text: getFirestoreError(e, 'salvar o item no Firestore') });
+          setStatus({
+            type: 'error',
+            text: `${getFirestoreError(e, 'salvar o item no Firestore')} (${e?.code || e?.message || 'erro desconhecido'})`,
+          });
         }
       };
 
