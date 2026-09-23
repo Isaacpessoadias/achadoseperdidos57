@@ -299,10 +299,10 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
         <ScrollView contentContainerStyle={styles.authContainer}>
-                      <TouchableOpacity onPress={() => setActiveView('home')} style={{marginBottom:10}}>
-              <Text style={{fontSize:24}}>{'←'}</Text>
-            </TouchableOpacity>
-            <Text style={styles.title}>Meu perfil</Text>
+                                  <TouchableOpacity onPress={() => setActiveView('home')} style={{marginBottom:10}}>
+  <Text style={{fontSize:24}}>{'←'}</Text>
+</TouchableOpacity>
+<Text style={styles.title}>Meu perfil</Text>
 
           <View style={styles.profileImageContainer}>
             <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage}>
@@ -371,10 +371,7 @@ export default function App() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <View style={styles.authContainer}>
-                        <TouchableOpacity onPress={() => setActiveView('home')} style={{marginBottom:10}}>
-              <Text style={{fontSize:24}}>{'←'}</Text>
-            </TouchableOpacity>
-            <Text style={styles.title}>Bem-vindo(a)!</Text>
+                                    <Text style={styles.title}>Bem-vindo(a)!</Text>
             <View style={styles.profileImageContainer}>
               <Image
                 source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
