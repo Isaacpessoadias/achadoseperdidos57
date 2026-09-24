@@ -300,10 +300,10 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
         <ScrollView contentContainerStyle={styles.authContainer}>
-                                  <TouchableOpacity onPress={() => setActiveView('home')} style={{marginBottom:10}}>
-  <Text style={{fontSize:24}}>{'←'}</Text>
-</TouchableOpacity>
-<Text style={styles.title}>Meu perfil</Text>
+          <TouchableOpacity onPress={() => setActiveView('home')} style={styles.backButton}>
+            <Text style={styles.backButtonText}>{'←'}</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Meu perfil</Text>
 
           <View style={styles.profileImageContainer}>
             <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage}>
@@ -372,7 +372,7 @@ export default function App() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <View style={styles.authContainer}>
-                                    <Text style={styles.title}>Bem-vindo(a)!</Text>
+            <Text style={styles.title}>Bem-vindo(a)!</Text>
             <View style={styles.profileImageContainer}>
               <Image
                 source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
@@ -573,7 +573,7 @@ export default function App() {
             <TouchableOpacity style={styles.buttonPrimary} onPress={handlePickItemImage}>
               <Text style={styles.buttonText}>Selecionar Imagem</Text>
             </TouchableOpacity>
-            {itemImage && <Image source={{ uri: itemImage }} style={{ width: 100, height: 100, marginTop: 10 }} />}
+            {itemImage && <Image source={{ uri: itemImage }} style={styles.itemPreview} />}
             <TouchableOpacity style={styles.buttonPrimary} onPress={handleAddItem}>
               <Text style={styles.buttonText}>Salvar</Text>
             </TouchableOpacity>
@@ -687,31 +687,45 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#f4f7f5',
   },
   container: {
     flexGrow: 1,
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: '#f3f4f6',
+    padding: 20,
+    backgroundColor: '#f4f7f5',
   },
   authContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
-    backgroundColor: '#f3f4f6',
+    padding: 20,
+    backgroundColor: '#f4f7f5',
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2eee9',
+    marginBottom: 12,
+  },
+  backButtonText: {
+    color: '#14532d',
+    fontSize: 25,
+    lineHeight: 28,
   },
   profileImageButton: {
     alignSelf: 'center',
     borderRadius: 72,
     borderWidth: 4,
-    borderColor: '#d1fae5',
-    marginBottom: 8,
+    borderColor: '#b7d8c9',
+    marginBottom: 10,
   },
   profileImageContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 18,
   },
   profileImageHome: {
     width: 120,
@@ -719,16 +733,16 @@ const styles = StyleSheet.create({
     borderRadius: 60,
   },
   changeImageText: {
-    color: '#2563eb',
+    color: '#0f766e',
     fontSize: 13,
     textAlign: 'center',
     marginBottom: 8,
   },
   profileTabRow: {
-    backgroundColor: '#e5e7eb',
-    borderRadius: 12,
-    padding: 6,
-    marginBottom: 18,
+    backgroundColor: '#e2eee9',
+    borderRadius: 14,
+    padding: 5,
+    marginBottom: 20,
   },
   profileTabButton: {
     paddingVertical: 12,
@@ -739,127 +753,163 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   title: {
-    fontSize: 30,
-    fontWeight: '700',
+    fontSize: 28,
+    fontWeight: '800',
     textAlign: 'center',
-    marginBottom: 20,
-    color: '#111827',
+    marginBottom: 22,
+    color: '#153b2e',
   },
   tabRow: {
     flexDirection: 'row',
-    backgroundColor: '#e5e7eb',
-    borderRadius: 12,
-    padding: 6,
-    marginBottom: 18,
+    backgroundColor: '#e2eee9',
+    borderRadius: 14,
+    padding: 5,
+    marginBottom: 20,
   },
   tabButton: {
     flex: 1,
-    paddingVertical: 12,
+    minHeight: 44,
+    paddingVertical: 11,
     borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   tabButtonActive: {
     backgroundColor: '#ffffff',
   },
   tabText: {
-    color: '#4b5563',
+    color: '#527064',
     fontWeight: '600',
+    textAlign: 'center',
   },
   tabTextActive: {
-    color: '#111827',
+    color: '#14532d',
   },
   formBox: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: '#d8e6df',
     shadowColor: '#000',
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.06,
     shadowRadius: 10,
     elevation: 2,
   },
   sectionTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 16,
-    color: '#1f2937',
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 18,
+    color: '#153b2e',
   },
   input: {
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#f8fbf9',
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+    borderColor: '#cbded4',
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 12,
+    paddingVertical: 13,
+    marginBottom: 14,
     fontSize: 16,
-    color: '#111827',
+    color: '#153b2e',
   },
   buttonPrimary: {
-    backgroundColor: '#2563eb',
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: '#0f766e',
+    borderRadius: 12,
+    minHeight: 48,
+    paddingVertical: 13,
     alignItems: 'center',
-    marginTop: 8,
+    justifyContent: 'center',
+    marginTop: 6,
+    marginBottom: 10,
   },
   buttonLogout: {
-    backgroundColor: '#dc2626',
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: '#3f7566',
+    borderRadius: 12,
+    minHeight: 48,
+    paddingVertical: 13,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
   },
   buttonDelete: {
-    backgroundColor: '#7f1d1d',
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: '#b45349',
+    borderRadius: 12,
+    minHeight: 48,
+    paddingVertical: 13,
     alignItems: 'center',
-    marginTop: 8,
+    justifyContent: 'center',
+    marginTop: 10,
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 10,
+    backgroundColor: '#e2eee9',
+    borderRadius: 12,
+    minHeight: 46,
     paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 4,
   },
   confirmDeleteButton: {
     flex: 1,
-    backgroundColor: '#b91c1c',
-    borderRadius: 10,
+    backgroundColor: '#b45349',
+    borderRadius: 12,
+    minHeight: 46,
     paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     marginLeft: 4,
   },
   buttonText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 16,
+    fontSize: 15,
   },
   userText: {
     fontSize: 18,
-    color: '#065f46',
+    color: '#14532d',
     textAlign: 'center',
     fontWeight: '600',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 18,
-    marginBottom: 20,
+    marginTop: 10,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#d1fae5',
+    borderColor: '#d8e6df',
+    shadowColor: '#153b2e',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
   cardTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 6,
+    fontWeight: '800',
+    color: '#153b2e',
+    marginBottom: 8,
   },
   cardText: {
     fontSize: 14,
-    color: '#4b5563',
+    color: '#527064',
+    lineHeight: 21,
+  },
+  itemImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 12,
+    marginBottom: 14,
+  },
+  itemPreview: {
+    width: 112,
+    height: 112,
+    borderRadius: 14,
+    marginTop: 4,
+    marginBottom: 14,
+    alignSelf: 'center',
   },
   message: {
     marginTop: 16,
@@ -868,10 +918,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   errorText: {
-    color: '#b91c1c',
+    color: '#b45349',
   },
   successText: {
-    color: '#047857',
+    color: '#0f766e',
   },
 });
 
