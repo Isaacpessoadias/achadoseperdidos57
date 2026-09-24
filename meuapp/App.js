@@ -46,13 +46,15 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const db = getFirestore(app);
 const DEFAULT_PROFILE_IMAGE = require('./android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp');
+const CLOUD_NAME = 'dmzdsr0af';
+const UPLOAD_PRESET = 'Fotos Itens';
 
 const uploadImage = async (uri, fileName) => {
   const data = new FormData();
   data.append('file', { uri, type: 'image/jpeg', name: fileName });
-  data.append('upload_preset', 'Dynamic_folders');
+  data.append('upload_preset', UPLOAD_PRESET);
 
-  const response = await fetch('https://api.cloudinary.com/v1_1/com07vbi/image/upload', {
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
     method: 'POST',
     body: data,
   });
