@@ -46,25 +46,42 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const db = getFirestore(app);
 const DEFAULT_PROFILE_IMAGE = require('./android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp');
-const CLOUD_NAME = 'dmzdsr0af';
+const CLOUD_NAME = 'com07vbi';
 const UPLOAD_PRESET = 'Fotos Itens';
+const UPLOAD_PRESETS = [UPLOAD_PRESET, 'Fotos_Itens', 'Fotos-Itens', 'Dynamic_folders'];
 
 const uploadImage = async (uri, fileName) => {
-  const data = new FormData();
-  data.append('file', { uri, type: 'image/jpeg', name: fileName });
-  data.append('upload_preset', UPLOAD_PRESET);
+  let lastPresetError = '';
 
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
-    method: 'POST',
-    body: data,
-  });
-  const result = await response.json();
+  for (const preset of UPLOAD_PRESETS) {
+    const fileResponse = await fetch(uri);
+    const blob = await fileResponse.blob();
+    const data = new FormData();
+    data.append('file', blob, fileName);
+    data.append('upload_preset', preset);
 
-  if (!response.ok || !result.secure_url) {
-    throw new Error(result.error?.message || `Cloudinary rejeitou o upload (${response.status}).`);
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+      method: 'POST',
+      body: data,
+    });
+    const result = await response.json();
+
+    if (response.ok && result.secure_url) {
+      return result.secure_url;
+    }
+
+    const cloudinaryMessage = result.error?.message || '';
+    const isPresetError = /upload[_ ]preset|preset/i.test(cloudinaryMessage);
+    if (!isPresetError) {
+      throw new Error(result.error?.message || `Cloudinary rejeitou o upload (${response.status}).`);
+    }
+
+    lastPresetError = cloudinaryMessage;
   }
 
-  return result.secure_url;
+  throw new Error(
+    `Nenhum preset válido foi encontrado no Cloudinary. Última resposta: ${lastPresetError || 'erro 400'}.`,
+  );
 };
 
 const getFirestoreError = (error, action) => {
@@ -556,9 +573,14 @@ export default function App() {
           setItemImage(null);
           setActiveView(itemType === 'lost' ? 'lost' : 'found');
         } catch (e) {
+          const errorMessage = e?.message || 'erro desconhecido';
+          const normalizedError = errorMessage.toLowerCase();
+          const isPresetError = normalizedError.includes('preset') && normalizedError.includes('cloudinary');
           setStatus({
             type: 'error',
-            text: `${getFirestoreError(e, 'salvar o item no Firestore')} (${e?.code || e?.message || 'erro desconhecido'})`,
+            text: isPresetError
+              ? `${errorMessage}. Crie um preset unsigned com esse nome no Cloudinary.`
+              : `${getFirestoreError(e, 'salvar o item no Firestore')} (${e?.code || errorMessage})`,
           });
         }
       };
