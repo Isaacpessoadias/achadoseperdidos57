@@ -115,6 +115,7 @@ export default function App() {
   const [itemLocation, setItemLocation] = useState('');
   const [itemCategory, setItemCategory] = useState('');
   const [itemImage, setItemImage] = useState(null);
+  const [itemType, setItemType] = useState('found');
   useEffect(() => {
     if (!user) {
       return;
@@ -431,10 +432,33 @@ export default function App() {
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.container}>
             <Text style={styles.title}>Itens Perdidos</Text>
-            {/* Placeholder for lost items list */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Nenhum item perdido ainda</Text>
-            </View>
+            <TouchableOpacity
+              style={styles.buttonPrimary}
+              onPress={() => {
+                setItemType('lost');
+                setActiveView('addItem');
+              }}
+            >
+              <Text style={styles.buttonText}>Cadastrar Item Perdido</Text>
+            </TouchableOpacity>
+            {foundItems.filter((item) => (item.type || 'found') === 'lost').length === 0 ? (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Nenhum item perdido ainda</Text>
+              </View>
+            ) : (
+              foundItems
+                .filter((item) => (item.type || 'found') === 'lost')
+                .map((item) => (
+                  <View style={styles.card} key={item.id}>
+                    {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
+                    <Text style={styles.cardTitle}>{item.name}</Text>
+                    <Text style={styles.cardText}>{item.description}</Text>
+                    <Text style={styles.cardText}>Local: {item.location}</Text>
+                    <Text style={styles.cardText}>Categoria: {item.category}</Text>
+                    <Text style={styles.cardText}>Tipo: Item perdido</Text>
+                  </View>
+                ))
+            )}
             <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView('home')}>
               <Text style={styles.tabText}>Voltar</Text>
             </TouchableOpacity>
@@ -448,8 +472,14 @@ export default function App() {
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.container}>
             <Text style={styles.title}>Itens Achados</Text>
-            <TouchableOpacity style={styles.buttonPrimary} onPress={() => setActiveView('addItem')}>
-              <Text style={styles.buttonText}>Cadastrar Item</Text>
+            <TouchableOpacity
+              style={styles.buttonPrimary}
+              onPress={() => {
+                setItemType('found');
+                setActiveView('addItem');
+              }}
+            >
+              <Text style={styles.buttonText}>Cadastrar Item Achado</Text>
             </TouchableOpacity>
             {foundItems.length === 0 ? (
               <View style={styles.card}>
@@ -463,6 +493,7 @@ export default function App() {
                   <Text style={styles.cardText}>{item.description}</Text>
                   <Text style={styles.cardText}>Local: {item.location}</Text>
                   <Text style={styles.cardText}>Categoria: {item.category}</Text>
+                  <Text style={styles.cardText}>Tipo: Item achado</Text>
                 </View>
               ))
             )}
@@ -508,6 +539,7 @@ export default function App() {
             description: itemDescription,
             location: itemLocation,
             category: itemCategory,
+              type: itemType,
             imageUrl,
             foundAt: new Date().toISOString(),
             userId: user ? user.uid : null,
@@ -520,7 +552,7 @@ export default function App() {
           setItemLocation('');
           setItemCategory('');
           setItemImage(null);
-          setActiveView('found');
+          setActiveView(itemType === 'lost' ? 'lost' : 'found');
         } catch (e) {
           setStatus({
             type: 'error',
@@ -533,7 +565,7 @@ export default function App() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.authContainer}>
-            <Text style={styles.title}>Cadastrar Item</Text>
+            <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
             <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
             <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
             <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
@@ -548,7 +580,7 @@ export default function App() {
             {status.text && (
               <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
             )}
-            <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView('found')}>
+            <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}>
               <Text style={styles.tabText}>Cancelar</Text>
             </TouchableOpacity>
           </ScrollView>
