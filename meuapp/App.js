@@ -1,5 +1,14 @@
-import React, { useEffect, useState } from 'react';
-
+import * as ImagePicker from "expo-image-picker";
+import { StatusBar } from 'expo-status-bar';
+import { getApps, initializeApp } from 'firebase/app';
+import {
+  createUserWithEmailAndPassword,
+  deleteUser,
+  getAuth,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
 import {
   addDoc,
   collection,
@@ -10,28 +19,11 @@ import {
   getFirestore,
   setDoc,
 } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 import {
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-  Image,
-} from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import * as ImagePicker from 'expo-image-picker';
-import { initializeApp, getApps } from 'firebase/app';
-import {
-  getAuth,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  deleteUser,
-  updateProfile,
-} from 'firebase/auth';
-
+  Image, SafeAreaView,
+  ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
+} from "react-native";
 const firebaseConfig = {
   apiKey: 'AIzaSyBNhN0dklcvbPTwTA6MJxJ8cZzTz4bFH9c',
   authDomain: 'achados-e-perdidos-4ea7d.firebaseapp.com',
@@ -848,7 +840,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   buttonLogout: {
-    backgroundColor: '#3f7566',
+    backgroundColor: '#b45349',
     borderRadius: 12,
     minHeight: 48,
     paddingVertical: 13,
