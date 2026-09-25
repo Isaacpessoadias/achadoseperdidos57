@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "dependencies": {
+    "@dataconnect/generated": "file:src/dataconnect-generated",
     "@react-navigation/bottom-tabs": "^7.19.2",
     "@react-navigation/native": "^7.4.1",
     "body-parser": "^2.3.0",
@@ -11,6 +12,8 @@
     "crypto-js": "^4.2.0",
     "eas-cli": "^24.8.0",
     "expo": "~57.0.25",
+    "expo-blob": "^57.0.2",
+    "expo-file-system": "~57.0.2",
     "expo-image-picker": "~57.0.20",
     "expo-status-bar": "~57.0.1",
     "express": "^5.2.1",

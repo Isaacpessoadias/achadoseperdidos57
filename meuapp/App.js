@@ -20,18 +20,16 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import {
-  Image, SafeAreaView,
-  ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
-} from "react-native";
+import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 const firebaseConfig = {
-  apiKey: 'AIzaSyBNhN0dklcvbPTwTA6MJxJ8cZzTz4bFH9c',
-  authDomain: 'achados-e-perdidos-4ea7d.firebaseapp.com',
-  projectId: 'achados-e-perdidos-4ea7d',
-  storageBucket: 'achados-e-perdidos-4ea7d.firebasestorage.app',
-  messagingSenderId: '377809757716',
-  appId: '1:377809757716:web:3ba331d955e4581b422901',
-  measurementId: 'G-PZ0LCCXPE5',
+  apiKey: "AIzaSyCUdPfqfF9NLLr4zI4TTtG54DJUh7Rio3c",
+  authDomain: "achaai-a08e1.firebaseapp.com",
+  projectId: "achaai-a08e1",
+  storageBucket: "achaai-a08e1.firebasestorage.app",
+  messagingSenderId: "873681609063",
+  appId: "1:873681609063:web:0482b0cdc1c2fa6534cfc2",
+  measurementId: "G-8DR7XC82BD"
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
@@ -42,14 +40,18 @@ const CLOUD_NAME = 'com07vbi';
 const UPLOAD_PRESET = 'Fotos Itens';
 const UPLOAD_PRESETS = [UPLOAD_PRESET, 'Fotos_Itens', 'Fotos-Itens', 'Dynamic_folders'];
 
+
+
 const uploadImage = async (uri, fileName) => {
   let lastPresetError = '';
 
+  // Use expo-blob to create a native Blob from the local file URI (efficient)
+  const { Blob } = await import('expo-blob'); // dynamic import to avoid bundler issues
+  const fileBlob = await Blob.fromURI(uri);
+
   for (const preset of UPLOAD_PRESETS) {
-    const fileResponse = await fetch(uri);
-    const blob = await fileResponse.blob();
     const data = new FormData();
-    data.append('file', blob, fileName);
+    data.append('file', fileBlob, fileName);
     data.append('upload_preset', preset);
 
     const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
@@ -67,12 +69,11 @@ const uploadImage = async (uri, fileName) => {
     if (!isPresetError) {
       throw new Error(result.error?.message || `Cloudinary rejeitou o upload (${response.status}).`);
     }
-
     lastPresetError = cloudinaryMessage;
   }
 
   throw new Error(
-    `Nenhum preset válido foi encontrado no Cloudinary. Última resposta: ${lastPresetError || 'erro 400'}.`,
+    `Nenhum preset válido foi encontrado no Cloudinary. Última resposta: ${lastPresetError || 'erro 400'}.`
   );
 };
 
