@@ -1,6 +1,5 @@
 /* eslint-disable */
-import * as FileSystem from 'expo-file-system';
-import { File as ExpoFile } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useState } from 'react';
 import {
@@ -54,7 +53,7 @@ const auth = initializeAuth(app, { persistence: inMemoryPersistence });
 const db = getFirestore(app);
 
 const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
-const CLOUD_NAME = 'com07vbi';
+const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
 
 const getFriendlyAuthError = (error, action) => {
@@ -88,82 +87,42 @@ const getFirestoreError = (error, action) => {
   return `Falha ao ${action}. Tente novamente.`;
 };
 
-const getMimeType = (uri = '', fileName = '') => {
-  const candidate = (fileName || uri).split('?')[0].split('/').pop().toLowerCase();
-  const extension = candidate.includes('.') ? candidate.split('.').pop() : '';
-  const map = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    gif: 'image/gif',
-    heic: 'image/heic',
-  };
-
-  return map[extension] || 'image/jpeg';
-};
-
-const uploadImage = async (uri, fileName) => {
+const uploadImage = async (uri, fileName, webFile) => {
   if (!uri) {
     throw new Error('URI inválida para upload.');
   }
 
-  const normalizedFileName = fileName || `upload-${Date.now()}.jpg`;
-  const mimeType = getMimeType(uri, normalizedFileName);
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`;
+  let responseStatus;
+  let result;
 
-  // Debug logs
-  console.log('[ANDROID UPLOAD] START');
-  console.log('[ANDROID UPLOAD] URI:', uri);
-  console.log('[ANDROID UPLOAD] FILE NAME:', normalizedFileName);
+  if (Platform.OS === 'web') {
+    const formData = new FormData();
+    const file = webFile || await (await fetch(uri)).blob();
+    formData.append('file', file, fileName || 'upload.jpg');
+    formData.append('upload_preset', UPLOAD_PRESET);
 
-  // New Expo File API
-  const file = new ExpoFile([uri], normalizedFileName, { type: mimeType });
-  console.log('[ANDROID FILE] EXISTS:', file.exists);
-  console.log('[ANDROID FILE] SIZE:', file.size ?? 0);
-  console.log('[ANDROID FILE] TYPE:', file.type ?? mimeType);
-  console.log('[ANDROID FILE] NAME:', file.name ?? normalizedFileName);
-  console.log('[ANDROID FILE] URI:', file.uri);
-
-  if (!file.exists || !(file.size && file.size > 0)) {
-    throw new Error('Arquivo de imagem Android não existe ou está vazio.');
-  }
-
-  const formData = new FormData();
-  // Prefer direct File in FormData; fallback to bytes if needed
-  if (typeof file.bytes === 'function') {
-    try {
-      const bytes = await file.bytes();
-      const blob = new Blob([bytes], { type: mimeType });
-      formData.append('file', blob, file.name ?? normalizedFileName);
-    } catch (e) {
-      // If bytes retrieval fails, fallback to raw object
-      formData.append('file', { uri, name: normalizedFileName, type: mimeType });
-    }
+    const response = await fetch(uploadUrl, { method: 'POST', body: formData });
+    responseStatus = response.status;
+    result = await response.json();
   } else {
-    formData.append('file', file);
+    const response = await FileSystem.uploadAsync(uploadUrl, uri, {
+      fieldName: 'file',
+      httpMethod: 'POST',
+      mimeType: 'image/jpeg',
+      parameters: { upload_preset: UPLOAD_PRESET },
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+    });
+    responseStatus = response.status;
+    result = JSON.parse(response.body);
   }
-  formData.append('upload_preset', UPLOAD_PRESET);
 
-  console.log('[ANDROID UPLOAD] CLOUDINARY STATUS: sending');
-  const cloudinaryResponse = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
-    {
-      method: 'POST',
-      body: formData,
-    }
-  );
-
-  console.log('[ANDROID CLOUDINARY] STATUS:', cloudinaryResponse.status);
-  const result = await cloudinaryResponse.json();
-  console.log('[ANDROID CLOUDINARY] RESPONSE:', JSON.stringify(result));
-
-  if (cloudinaryResponse.ok && typeof result?.secure_url === 'string' && result.secure_url) {
-    console.log('[ANDROID CLOUDINARY] SECURE URL:', result.secure_url);
+  if (responseStatus >= 200 && responseStatus < 300
+    && typeof result?.secure_url === 'string' && result.secure_url) {
     return result.secure_url;
   }
 
-  const errorMessage = result?.error?.message || `Cloudinary rejeitou o upload (${cloudinaryResponse.status}).`;
-  console.error('[ANDROID UPLOAD ERROR]', errorMessage);
+  const errorMessage = result?.error?.message || `Cloudinary rejeitou o upload (${responseStatus}).`;
   throw new Error(errorMessage);
 };
 
@@ -185,6 +144,7 @@ export default function App() {
   const [itemLocation, setItemLocation] = useState('');
   const [itemCategory, setItemCategory] = useState('');
   const [itemImage, setItemImage] = useState(null);
+  const [itemImageFile, setItemImageFile] = useState(null);
   const [itemType, setItemType] = useState('found');
 
   useEffect(() => {
@@ -315,6 +275,7 @@ export default function App() {
       return;
     }
 
+    let uploadStage = 'image';
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -340,7 +301,8 @@ export default function App() {
       }
 
       setIsUploading(true);
-      const photoUrl = await uploadImage(localUri, `profile-${user.uid}.jpg`);
+      const photoUrl = await uploadImage(localUri, `profile-${user.uid}.jpg`, result.assets[0].file);
+      uploadStage = 'profile';
       await setDoc(
         doc(db, 'profiles', user.uid),
         {
@@ -354,8 +316,11 @@ export default function App() {
       setProfileImage(photoUrl);
       setStatus({ type: 'success', text: 'Foto de perfil salva com sucesso.' });
     } catch (error) {
-      console.error('[UPLOAD ERROR]', error);
-      setStatus({ type: 'error', text: 'Não foi possível enviar a imagem. Tente novamente.' });
+      console.error(`[${uploadStage === 'image' ? 'IMAGE UPLOAD' : 'PROFILE SAVE'} ERROR]`, error);
+      const message = uploadStage === 'image'
+        ? `Falha no envio da imagem: ${error?.message || 'erro desconhecido.'}`
+        : getFirestoreError(error, 'salvar a foto do perfil');
+      setStatus({ type: 'error', text: message });
     } finally {
       setIsUploading(false);
     }
@@ -381,8 +346,10 @@ export default function App() {
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        setItemImage(result.assets[0].uri);
+      const asset = result.assets?.[0];
+      if (!result.canceled && asset?.uri) {
+        setItemImage(asset.uri);
+        setItemImageFile(asset.file || null);
         setStatus({ type: 'success', text: 'Imagem selecionada. Agora basta salvar.' });
       }
     } catch (error) {
@@ -402,9 +369,12 @@ export default function App() {
     }
 
     setIsUploading(true);
+    let uploadStage = itemImage ? 'image' : 'item';
 
     try {
-      const imageUrl = itemImage ? await uploadImage(itemImage, `item-${Date.now()}.jpg`) : '';
+      const imageUrl = itemImage
+        ? await uploadImage(itemImage, `item-${Date.now()}.jpg`, itemImageFile)
+        : '';
       const safeImageUrl = typeof imageUrl === 'string' ? imageUrl : '';
       console.log('[ANDROID UPLOAD] FIRESTORE SAVE:', safeImageUrl ? 'with image' : 'without image');
 
@@ -420,6 +390,7 @@ export default function App() {
         userId: user ? user.uid : null,
       };
 
+      uploadStage = 'item';
       const itemReference = await addDoc(collection(db, 'items'), itemData);
       setFoundItems((currentItems) => [{ id: itemReference.id, ...itemData }, ...currentItems]);
 
@@ -429,10 +400,14 @@ export default function App() {
       setItemLocation('');
       setItemCategory('');
       setItemImage(null);
+      setItemImageFile(null);
       setActiveView(itemType === 'lost' ? 'lost' : 'found');
     } catch (error) {
-      console.error('[UPLOAD ERROR]', error);
-      setStatus({ type: 'error', text: 'Não foi possível enviar a imagem. Tente novamente.' });
+      console.error(`[${uploadStage === 'image' ? 'IMAGE UPLOAD' : 'ITEM SAVE'} ERROR]`, error);
+      const message = uploadStage === 'image'
+        ? `Falha no envio da imagem: ${error?.message || 'erro desconhecido.'}`
+        : getFirestoreError(error, 'salvar o item');
+      setStatus({ type: 'error', text: message });
     } finally {
       setIsUploading(false);
     }
@@ -499,7 +474,8 @@ export default function App() {
       <SafeAreaProvider>
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
-          <View style={styles.authContainer}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
             <View style={styles.tabRow}>
               <TouchableOpacity style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]} onPress={() => setActiveView('lost')}>
                 <Text style={[styles.tabText, activeView === 'lost' && styles.tabTextActive]}>Itens Perdidos</Text>
@@ -516,7 +492,7 @@ export default function App() {
             </View>
 
             {activeView === 'lost' && (
-              <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+              <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
                 <TouchableOpacity
                   style={styles.buttonPrimary}
@@ -529,11 +505,11 @@ export default function App() {
                   <Text style={styles.buttonText}>Cadastrar Item Perdido</Text>
                 </TouchableOpacity>
                 {renderItemList('lost')}
-              </ScrollView>
+              </View>
             )}
 
             {activeView === 'found' && (
-              <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+              <View>
                 <Text style={styles.title}>Itens Achados</Text>
                 <TouchableOpacity
                   style={styles.buttonPrimary}
@@ -546,11 +522,11 @@ export default function App() {
                   <Text style={styles.buttonText}>Cadastrar Item Achado</Text>
                 </TouchableOpacity>
                 {renderItemList('found')}
-              </ScrollView>
+              </View>
             )}
 
             {activeView === 'profile' && (
-              <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+              <View>
                 <TouchableOpacity onPress={() => setActiveView('lost')} style={styles.backButton}>
                   <Text style={styles.backButtonText}>{'←'}</Text>
                 </TouchableOpacity>
@@ -565,12 +541,11 @@ export default function App() {
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
-              </ScrollView>
+              </View>
             )}
 
             {activeView === 'addItem' && (
-              <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-                <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+              <View>
                   <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
@@ -594,8 +569,7 @@ export default function App() {
                   <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}>
                     <Text style={styles.tabText}>Cancelar</Text>
                   </TouchableOpacity>
-                </ScrollView>
-              </KeyboardAvoidingView>
+              </View>
             )}
 
             <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
@@ -620,7 +594,8 @@ export default function App() {
                 </View>
               </View>
             )}
-          </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </SafeAreaProvider>
     );
