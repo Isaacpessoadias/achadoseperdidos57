@@ -1,7 +1,7 @@
 /* eslint-disable */
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -19,11 +19,14 @@ import { getApps, initializeApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
   deleteUser,
+  EmailAuthProvider,
   initializeAuth,
   inMemoryPersistence,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   signOut,
+  updatePassword,
   updateProfile,
 } from 'firebase/auth';
 import {
@@ -55,6 +58,33 @@ const db = getFirestore(app);
 const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
+const ITEM_CATEGORIES = [
+  'Documento',
+  'Eletronicos (celular, notebook etc)',
+  'Garrafa',
+  'Material Escolar',
+  'Óculos',
+  'Guarda Chuva',
+  'Bolsa',
+  'Roupas',
+  'Calçados',
+  'Outros',
+];
+const ACCOUNT_DOMAIN_HINT = 'Use e-mail @ifpe.edu.br (servidor) ou @discente.ifpe.edu.br (aluno).';
+
+const getAccountType = (emailAddress) => {
+  const normalizedEmail = (emailAddress || '').trim().toLowerCase();
+
+  if (/^[^@\s]+@discente\.ifpe\.edu\.br$/.test(normalizedEmail)) {
+    return 'student';
+  }
+
+  if (/^[^@\s]+@ifpe\.edu\.br$/.test(normalizedEmail)) {
+    return 'server';
+  }
+
+  return null;
+};
 
 const getFriendlyAuthError = (error, action) => {
   const code = error?.code || '';
@@ -136,6 +166,11 @@ export default function App() {
   const [activeView, setActiveView] = useState('lost');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
+  const [isEditingAccount, setIsEditingAccount] = useState(false);
+  const [editProfileName, setEditProfileName] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [foundItems, setFoundItems] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -143,12 +178,23 @@ export default function App() {
   const [itemDescription, setItemDescription] = useState('');
   const [itemLocation, setItemLocation] = useState('');
   const [itemCategory, setItemCategory] = useState('');
+  const [showCategoryOptions, setShowCategoryOptions] = useState(false);
   const [itemImage, setItemImage] = useState(null);
   const [itemImageFile, setItemImageFile] = useState(null);
   const [itemType, setItemType] = useState('found');
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const scrollViewRef = useRef(null);
+  const isItemListView = activeView === 'lost' || activeView === 'found';
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser && !getAccountType(currentUser.email)) {
+        await signOut(auth);
+        setUser(null);
+        setStatus({ type: 'error', text: ACCOUNT_DOMAIN_HINT });
+        return;
+      }
+
       setUser(currentUser);
       if (currentUser) {
         setActiveView('lost');
@@ -157,6 +203,11 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+    setShowScrollTop(false);
+  }, [activeView]);
 
   useEffect(() => {
     if (!user) {
@@ -211,13 +262,19 @@ export default function App() {
       return;
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!getAccountType(normalizedEmail)) {
+      setStatus({ type: 'error', text: ACCOUNT_DOMAIN_HINT });
+      return;
+    }
+
     if (password.length < 6) {
       setStatus({ type: 'error', text: 'A senha precisa ter pelo menos 6 caracteres.' });
       return;
     }
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       const normalizedName = fullName.trim();
 
       await updateProfile(userCredential.user, { displayName: normalizedName });
@@ -244,8 +301,14 @@ export default function App() {
       return;
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!getAccountType(normalizedEmail)) {
+      setStatus({ type: 'error', text: ACCOUNT_DOMAIN_HINT });
+      return;
+    }
+
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
       setActiveView('lost');
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
@@ -399,6 +462,7 @@ export default function App() {
       setItemDescription('');
       setItemLocation('');
       setItemCategory('');
+      setShowCategoryOptions(false);
       setItemImage(null);
       setItemImageFile(null);
       setActiveView(itemType === 'lost' ? 'lost' : 'found');
@@ -446,6 +510,65 @@ export default function App() {
     }
   };
 
+  const handleUpdateAccount = async () => {
+    const normalizedName = editProfileName.trim();
+    const passwordChanged = newPassword.length > 0;
+
+    if (!normalizedName) {
+      setStatus({ type: 'error', text: 'Informe seu nome.' });
+      return;
+    }
+
+    if (passwordChanged && newPassword.length < 6) {
+      setStatus({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+      return;
+    }
+
+    if (passwordChanged && !currentPassword) {
+      setStatus({ type: 'error', text: 'Informe sua senha atual para alterá-la.' });
+      return;
+    }
+
+    if (!auth.currentUser) {
+      setStatus({ type: 'error', text: 'Nenhuma conta ativa para atualizar.' });
+      return;
+    }
+
+    setIsSavingAccount(true);
+    try {
+      const currentUser = auth.currentUser;
+
+      if (passwordChanged) {
+        const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+        await reauthenticateWithCredential(currentUser, credential);
+        await updatePassword(currentUser, newPassword);
+      }
+
+      await setDoc(
+        doc(db, 'profiles', currentUser.uid),
+        { name: normalizedName, email: currentUser.email || '' },
+        { merge: true },
+      );
+      await updateProfile(currentUser, { displayName: normalizedName });
+
+      setProfileName(normalizedName);
+      setEditProfileName(normalizedName);
+      setCurrentPassword('');
+      setNewPassword('');
+      setIsEditingAccount(false);
+      setStatus({ type: 'success', text: 'Informações da conta atualizadas com sucesso.' });
+    } catch (error) {
+      const message = error?.code === 'auth/wrong-password' || error?.code === 'auth/invalid-credential'
+        ? 'A senha atual está incorreta.'
+        : error?.code?.startsWith('auth/')
+          ? getFriendlyAuthError(error, 'atualizar as informações da conta')
+          : getFirestoreError(error, 'atualizar o perfil');
+      setStatus({ type: 'error', text: message });
+    } finally {
+      setIsSavingAccount(false);
+    }
+  };
+
   const renderItemList = (type) => {
     const filteredItems = foundItems.filter((item) => (item.type || 'found') === type);
 
@@ -476,21 +599,18 @@ export default function App() {
           <StatusBar style="dark" />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
             <View style={styles.appShell}>
-              <ScrollView style={styles.screenScroll} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.screenScroll}
+                contentContainerStyle={[styles.container, isItemListView && styles.containerWithFloatingActions]}
+                keyboardShouldPersistTaps="handled"
+                onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
+                scrollEventThrottle={16}
+              >
 
             {activeView === 'lost' && (
               <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
-                <TouchableOpacity
-                  style={styles.buttonPrimary}
-                  onPress={() => {
-                    setItemType('lost');
-                    setActiveView('addItem');
-                  }}
-                  disabled={isUploading}
-                >
-                  <Text style={styles.buttonText}>Cadastrar Item Perdido</Text>
-                </TouchableOpacity>
                 {renderItemList('lost')}
               </View>
             )}
@@ -498,23 +618,15 @@ export default function App() {
             {activeView === 'found' && (
               <View>
                 <Text style={styles.title}>Itens Achados</Text>
-                <TouchableOpacity
-                  style={styles.buttonPrimary}
-                  onPress={() => {
-                    setItemType('found');
-                    setActiveView('addItem');
-                  }}
-                  disabled={isUploading}
-                >
-                  <Text style={styles.buttonText}>Cadastrar Item Achado</Text>
-                </TouchableOpacity>
                 {renderItemList('found')}
               </View>
             )}
 
             {activeView === 'profile' && (
               <View>
-                <Text style={styles.title}>Meu perfil</Text>
+                <Text style={styles.title}>
+                  {getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}
+                </Text>
                 <View style={styles.profileImageContainer}>
                   <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage} disabled={isUploading}>
                     <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
@@ -525,6 +637,51 @@ export default function App() {
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
+                <TouchableOpacity
+                  style={styles.editAccountButton}
+                  onPress={() => {
+                    setEditProfileName(profileName || user.displayName || '');
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setIsEditingAccount((editing) => !editing);
+                  }}
+                >
+                  <Text style={styles.editAccountButtonText}>{isEditingAccount ? 'Cancelar edição' : 'Alterar informações da conta'}</Text>
+                </TouchableOpacity>
+                {isEditingAccount && (
+                  <View style={styles.accountEditForm}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Nome"
+                      value={editProfileName}
+                      onChangeText={setEditProfileName}
+                      autoCapitalize="words"
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Nova senha (opcional)"
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      secureTextEntry
+                    />
+                    {newPassword.length > 0 && (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Senha atual"
+                        value={currentPassword}
+                        onChangeText={setCurrentPassword}
+                        secureTextEntry
+                      />
+                    )}
+                    <TouchableOpacity
+                      style={[styles.buttonPrimary, isSavingAccount && styles.buttonDisabled]}
+                      onPress={handleUpdateAccount}
+                      disabled={isSavingAccount}
+                    >
+                      {isSavingAccount ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alterações</Text>}
+                    </TouchableOpacity>
+                  </View>
+                )}
                 <View style={styles.accountActions}>
                   <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
                     <Text style={styles.buttonText}>Sair</Text>
@@ -556,7 +713,36 @@ export default function App() {
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
                   <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
-                  <TextInput style={styles.input} placeholder="Categoria" value={itemCategory} onChangeText={setItemCategory} />
+                  <TouchableOpacity
+                    style={styles.categoryPicker}
+                    onPress={() => setShowCategoryOptions((showing) => !showing)}
+                    accessibilityRole="button"
+                    accessibilityLabel={itemCategory || 'Selecionar categoria do item'}
+                  >
+                    <Text style={[styles.categoryPickerText, !itemCategory && styles.categoryPlaceholder]}>
+                      {itemCategory || 'Selecionar categoria'}
+                    </Text>
+                  </TouchableOpacity>
+                  {showCategoryOptions && (
+                    <View style={styles.categoryOptions}>
+                      {ITEM_CATEGORIES.map((category) => (
+                        <TouchableOpacity
+                          key={category}
+                          style={[styles.categoryOption, itemCategory === category && styles.categoryOptionSelected]}
+                          onPress={() => {
+                            setItemCategory(category);
+                            setShowCategoryOptions(false);
+                          }}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: itemCategory === category }}
+                        >
+                          <Text style={[styles.categoryOptionText, itemCategory === category && styles.categoryOptionTextSelected]}>
+                            {category}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
 
                   <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handlePickItemImage} disabled={isUploading}>
                     <Text style={styles.buttonText}>Selecionar Imagem</Text>
@@ -578,6 +764,35 @@ export default function App() {
               </View>
             )}
               </ScrollView>
+              {(isItemListView || showScrollTop) && (
+                <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
+                  {isItemListView && (
+                    <TouchableOpacity
+                      style={styles.floatingAddButton}
+                      onPress={() => {
+                        setItemType(activeView);
+                        setActiveView('addItem');
+                      }}
+                      disabled={isUploading}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.floatingAddButtonText}>
+                        {activeView === 'lost' ? 'Cadastrar item perdido' : 'Cadastrar item achado'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {showScrollTop && (
+                    <TouchableOpacity
+                      style={styles.scrollTopButton}
+                      onPress={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}
+                      accessibilityRole="button"
+                      accessibilityLabel="Voltar ao topo"
+                    >
+                      <Text style={styles.scrollTopText}>↑</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
               <View style={styles.bottomBar}>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeView === 'lost' && styles.bottomNavButtonActive]}
@@ -629,6 +844,7 @@ export default function App() {
               <View style={styles.formBox}>
                 <Text style={styles.sectionTitle}>Login</Text>
                 <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                 <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
                 <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
                   <Text style={styles.buttonText}>Entrar</Text>
@@ -639,6 +855,7 @@ export default function App() {
                 <Text style={styles.sectionTitle}>Cadastro</Text>
                 <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
                 <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                 <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
                 <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
                   <Text style={styles.buttonText}>Cadastrar</Text>
@@ -678,6 +895,9 @@ const styles = StyleSheet.create({
   },
   screenScroll: {
     flex: 1,
+  },
+  containerWithFloatingActions: {
+    paddingBottom: 140,
   },
   profileImageButton: {
     alignSelf: 'center',
@@ -763,6 +983,58 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#153b2e',
   },
+  authHint: {
+    marginTop: -8,
+    marginBottom: 14,
+    color: '#527064',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  categoryPicker: {
+    minHeight: 50,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 8,
+    backgroundColor: '#f8fbf9',
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 12,
+  },
+  categoryPickerText: {
+    fontSize: 16,
+    color: '#153b2e',
+  },
+  categoryPlaceholder: {
+    color: '#7b9187',
+  },
+  categoryOptions: {
+    marginBottom: 14,
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 12,
+  },
+  categoryOption: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5eee9',
+  },
+  categoryOptionSelected: {
+    backgroundColor: '#e2eee9',
+  },
+  categoryOptionText: {
+    fontSize: 15,
+    color: '#527064',
+  },
+  categoryOptionTextSelected: {
+    color: '#153b2e',
+    fontWeight: '700',
+  },
   buttonPrimary: {
     backgroundColor: '#0f766e',
     borderRadius: 12,
@@ -801,6 +1073,23 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
   },
+  editAccountButton: {
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 10,
+    backgroundColor: '#e2eee9',
+  },
+  editAccountButtonText: {
+    color: '#153b2e',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  accountEditForm: {
+    marginBottom: 8,
+  },
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -810,6 +1099,51 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderTopColor: '#d8e6df',
+  },
+  floatingActions: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 78,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  floatingActionsEnd: {
+    justifyContent: 'flex-end',
+  },
+  floatingAddButton: {
+    flex: 1,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#0f766e',
+    elevation: 4,
+  },
+  floatingAddButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scrollTopButton: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    backgroundColor: '#ffffff',
+    elevation: 4,
+  },
+  scrollTopText: {
+    color: '#153b2e',
+    fontSize: 23,
+    fontWeight: '700',
+    lineHeight: 28,
   },
   bottomNavButton: {
     flex: 1,
