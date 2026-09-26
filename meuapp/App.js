@@ -1,14 +1,17 @@
 import * as ImagePicker from "expo-image-picker";
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
   deleteUser,
-  getAuth,
+  initializeAuth,
+  getReactNativePersistence,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
 } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   addDoc,
   collection,
@@ -33,42 +36,69 @@ const firebaseConfig = {
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
-const auth = getAuth(app);
+const auth = initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
 const db = getFirestore(app);
 const DEFAULT_PROFILE_IMAGE = require('./android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp');
 const CLOUD_NAME = 'com07vbi';
-const UPLOAD_PRESET = 'Fotos Itens';
-const UPLOAD_PRESETS = [UPLOAD_PRESET, 'Fotos_Itens', 'Fotos-Itens', 'Dynamic_folders'];
+export const UPLOAD_PRESET = 'Fotos Itens';
+const UPLOAD_PRESETS = [UPLOAD_PRESET];
 
 
 
+
+
+// Modern upload helper – avoids deprecated readAsStringAsync.
+// Returns secure_url string.
 const uploadImage = async (uri, fileName) => {
+  console.log('UPLOAD START');
+  console.log('IMAGE URI:', uri);
+  console.log('FILE NAME:', fileName);
+
   let lastPresetError = '';
 
-  // Use expo-blob to create a native Blob from the local file URI (efficient)
-  const { Blob } = await import('expo-blob'); // dynamic import to avoid bundler issues
-  const fileBlob = await Blob.fromURI(uri);
+  // Infer MIME type from file extension; fallback to generic binary.
+  const getMimeType = (u) => {
+    const ext = u.split('.').pop()?.toLowerCase();
+    const map = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      webp: 'image/webp',
+      gif: 'image/gif',
+      heic: 'image/heic',
+    };
+    return map[ext] || 'application/octet-stream';
+  };
+  const mime = getMimeType(uri);
+  console.log('MIME TYPE:', mime);
 
+  // Cloudinary expects a multipart/form-data payload with a file object.
   for (const preset of UPLOAD_PRESETS) {
+    console.log('TRYING PRESET:', preset);
     const data = new FormData();
-    data.append('file', fileBlob, fileName);
+    data.append('file', { uri, name: fileName, type: mime });
     data.append('upload_preset', preset);
 
     const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
       method: 'POST',
       body: data,
     });
+    console.log('CLOUDINARY STATUS:', response.status);
     const result = await response.json();
+    console.log('CLOUDINARY RESPONSE:', JSON.stringify(result));
 
     if (response.ok && result.secure_url) {
+      console.log('UPLOAD SUCCESS, URL:', result.secure_url);
       return result.secure_url;
     }
 
     const cloudinaryMessage = result.error?.message || '';
     const isPresetError = /upload[_ ]preset|preset/i.test(cloudinaryMessage);
     if (!isPresetError) {
-      throw new Error(result.error?.message || `Cloudinary rejeitou o upload (${response.status}).`);
+      console.error('CLOUDINARY ERROR (non-preset):', cloudinaryMessage);
+      throw new Error(cloudinaryMessage || `Cloudinary rejeitou o upload (${response.status}).`);
     }
+    console.warn('PRESET REJECTED:', cloudinaryMessage);
     lastPresetError = cloudinaryMessage;
   }
 
@@ -116,11 +146,14 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
-  const [activeView, setActiveView] = useState('profile');
+  const [activeView, setActiveView] = useState('lost');
+
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [foundItems, setFoundItems] = useState([]);
+  // Tracks upload status to avoid concurrent uploads
+  const [isUploading, setIsUploading] = useState(false);
 
   const [itemName, setItemName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -196,7 +229,7 @@ export default function App() {
       setUser(userData);
       setProfileName(normalizedName);
       setProfileImage(null);
-      setActiveView('home');
+      setActiveView('lost');
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
     } catch (error) {
@@ -213,7 +246,7 @@ export default function App() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       setUser(userCredential.user);
-      setActiveView('home');
+      setActiveView('lost');
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
       clearForm();
     } catch (error) {
@@ -227,7 +260,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('home');
+      setActiveView('lost');
       setStatus({ type: 'success', text: 'Você saiu da conta com sucesso.' });
       clearForm();
       setScreen('login');
@@ -285,7 +318,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('home');
+      setActiveView('lost');
       setStatus({ type: 'success', text: 'Sua conta foi excluída com sucesso.' });
       clearForm();
       setScreen('login');
@@ -309,10 +342,10 @@ export default function App() {
 
   if (user && activeView === 'profile') {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
         <ScrollView contentContainerStyle={styles.authContainer}>
-          <TouchableOpacity onPress={() => setActiveView('home')} style={styles.backButton}>
+          <TouchableOpacity onPress={() => setActiveView('lost')} style={styles.backButton}>
             <Text style={styles.backButtonText}>{'←'}</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Meu perfil</Text>
@@ -373,26 +406,17 @@ export default function App() {
             </View>
           )}
         </ScrollView>
-      </SafeAreaView>
+      </SafeAreaView></SafeAreaProvider>
     );
   }
 
   if (user) {
     // Main menu after login
-    if (activeView === 'home') {
+    
       return (
-        <SafeAreaView style={styles.safeArea}>
+        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <View style={styles.authContainer}>
-            <Text style={styles.title}>Bem-vindo(a)!</Text>
-            <View style={styles.profileImageContainer}>
-              <Image
-                source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
-                style={styles.profileImageHome}
-                resizeMode="cover"
-              />
-            </View>
-            <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
             <View style={styles.tabRow}>
               <TouchableOpacity
                 style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]}
@@ -400,20 +424,39 @@ export default function App() {
               >
                 <Text style={[styles.tabText, activeView === 'lost' && styles.tabTextActive]}>Itens Perdidos</Text>
               </TouchableOpacity>
-            
-            <TouchableOpacity
+              <TouchableOpacity
                 style={[styles.tabButton, activeView === 'found' && styles.tabButtonActive]}
                 onPress={() => setActiveView('found')}
               >
                 <Text style={[styles.tabText, activeView === 'found' && styles.tabTextActive]}>Itens Achados</Text>
               </TouchableOpacity>
-            <TouchableOpacity
+              <TouchableOpacity
                 style={[styles.tabButton, activeView === 'profile' && styles.tabButtonActive]}
                 onPress={() => setActiveView('profile')}
               >
                 <Text style={[styles.tabText, activeView === 'profile' && styles.tabTextActive]}>Perfil</Text>
               </TouchableOpacity>
+              <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.profileImageButton}>
+                <Image
+                  source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
+                  style={styles.profileImageHome}
+                  resizeMode="cover"
+                />
+              </TouchableOpacity>
             </View>
+            {activeView === 'lost' && (
+              <View style={styles.container}>
+                <Text style={styles.title}>Itens Perdidos</Text>
+                <TouchableOpacity
+                  style={styles.buttonPrimary}
+                  onPress={() => { setItemType('lost'); setActiveView('addItem'); }}
+                >
+                  <Text style={styles.buttonText}>Cadastrar Item Perdido</Text>
+                </TouchableOpacity>
+                {/* Items list will be rendered in the separate lost view below */}
+              </View>
+            )}
+            {/* The rest of the UI (found, profile, addItem) is handled in their own conditional blocks below */}
             <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
               <Text style={styles.buttonText}>Sair</Text>
             </TouchableOpacity>
@@ -435,14 +478,30 @@ export default function App() {
               </View>
             )}
           </View>
-        </SafeAreaView>
+        </SafeAreaView></SafeAreaProvider>
       );
     }
     if (activeView === 'lost') {
       return (
-        <SafeAreaView style={styles.safeArea}>
+        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.container}>
+            <View style={styles.topNavContainer}>
+              <View style={styles.topNavTabs}>
+                <TouchableOpacity onPress={() => setActiveView('lost')}>
+                  <Text style={styles.topNavTabText}>Itens Perdidos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setActiveView('found')}>
+                  <Text style={styles.topNavTabText}>Itens Achados</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setActiveView('profile')}>
+                  <Text style={styles.topNavTabText}>Perfil</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity style={styles.topNavCircle} onPress={() => setActiveView('profile')}>
+                <Text style={styles.topNavCircleText}>🤖</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={styles.title}>Itens Perdidos</Text>
             <TouchableOpacity
               style={styles.buttonPrimary}
@@ -475,12 +534,12 @@ export default function App() {
               <Text style={styles.tabText}>Voltar</Text>
             </TouchableOpacity>
           </ScrollView>
-        </SafeAreaView>
+        </SafeAreaView></SafeAreaProvider>
       );
     }
     if (activeView === 'found') {
       return (
-        <SafeAreaView style={styles.safeArea}>
+        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.container}>
             <Text style={styles.title}>Itens Achados</Text>
@@ -513,7 +572,7 @@ export default function App() {
               <Text style={styles.tabText}>Voltar</Text>
             </TouchableOpacity>
           </ScrollView>
-        </SafeAreaView>
+        </SafeAreaView></SafeAreaProvider>
       );
     }
     // Add Item view
@@ -579,7 +638,7 @@ export default function App() {
       };
 
       return (
-        <SafeAreaView style={styles.safeArea}>
+        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.authContainer}>
             <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
@@ -601,16 +660,14 @@ export default function App() {
               <Text style={styles.tabText}>Cancelar</Text>
             </TouchableOpacity>
           </ScrollView>
-        </SafeAreaView>
+        </SafeAreaView></SafeAreaProvider>
       );
     }
 
-    // Fallback (should not reach)
-    return null;
-  }
+
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Achados e Perdidos</Text>
@@ -697,7 +754,7 @@ export default function App() {
           </Text>
         ) : null}
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaView></SafeAreaProvider>
   );
 }
 
@@ -799,9 +856,39 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  tabTextActive: {
-    color: '#14532d',
+  topNavContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#e9f5f0', // very light mint/gray
+    borderRadius: 30,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginHorizontal: 20,
+    marginBottom: 20,
   },
+  topNavTabs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  topNavTabText: {
+    color: '#2c453a', // dark gray/green
+    fontSize: 14,
+    marginHorizontal: 8,
+  },
+  topNavCircle: {
+    backgroundColor: '#1A7A6B',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topNavCircleText: {
+    color: '#fff',
+    fontSize: 20,
+  },
+
   formBox: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
