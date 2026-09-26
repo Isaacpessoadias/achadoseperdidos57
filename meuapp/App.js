@@ -1,17 +1,32 @@
-import * as ImagePicker from "expo-image-picker";
-import React from 'react';
+/* eslint-disable */
+import * as FileSystem from 'expo-file-system';
+import { File as ExpoFile } from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
   deleteUser,
   initializeAuth,
-  getReactNativePersistence,
+  inMemoryPersistence,
+  onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
 } from 'firebase/auth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   addDoc,
   collection,
@@ -22,106 +37,28 @@ import {
   getFirestore,
   setDoc,
 } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
 const firebaseConfig = {
-  apiKey: "AIzaSyCUdPfqfF9NLLr4zI4TTtG54DJUh7Rio3c",
-  authDomain: "achaai-a08e1.firebaseapp.com",
-  projectId: "achaai-a08e1",
-  storageBucket: "achaai-a08e1.firebasestorage.app",
-  messagingSenderId: "873681609063",
-  appId: "1:873681609063:web:0482b0cdc1c2fa6534cfc2",
-  measurementId: "G-8DR7XC82BD"
+  apiKey: 'AIzaSyCUdPfqfF9NLLr4zI4TTtG54DJUh7Rio3c',
+  authDomain: 'achaai-a08e1.firebaseapp.com',
+  projectId: 'achaai-a08e1',
+  storageBucket: 'achaai-a08e1.firebasestorage.app',
+  messagingSenderId: '873681609063',
+  appId: '1:873681609063:web:0482b0cdc1c2fa6534cfc2',
+  measurementId: 'G-8DR7XC82BD',
 };
 
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
-const auth = initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
+const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const auth = initializeAuth(app, { persistence: inMemoryPersistence });
 const db = getFirestore(app);
-const DEFAULT_PROFILE_IMAGE = require('./android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp');
+
+const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'com07vbi';
-export const UPLOAD_PRESET = 'Fotos Itens';
-const UPLOAD_PRESETS = [UPLOAD_PRESET];
-
-
-
-
-
-// Modern upload helper – avoids deprecated readAsStringAsync.
-// Returns secure_url string.
-const uploadImage = async (uri, fileName) => {
-  console.log('UPLOAD START');
-  console.log('IMAGE URI:', uri);
-  console.log('FILE NAME:', fileName);
-
-  let lastPresetError = '';
-
-  // Infer MIME type from file extension; fallback to generic binary.
-  const getMimeType = (u) => {
-    const ext = u.split('.').pop()?.toLowerCase();
-    const map = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      webp: 'image/webp',
-      gif: 'image/gif',
-      heic: 'image/heic',
-    };
-    return map[ext] || 'application/octet-stream';
-  };
-  const mime = getMimeType(uri);
-  console.log('MIME TYPE:', mime);
-
-  // Cloudinary expects a multipart/form-data payload with a file object.
-  for (const preset of UPLOAD_PRESETS) {
-    console.log('TRYING PRESET:', preset);
-    const data = new FormData();
-    data.append('file', { uri, name: fileName, type: mime });
-    data.append('upload_preset', preset);
-
-    const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
-      method: 'POST',
-      body: data,
-    });
-    console.log('CLOUDINARY STATUS:', response.status);
-    const result = await response.json();
-    console.log('CLOUDINARY RESPONSE:', JSON.stringify(result));
-
-    if (response.ok && result.secure_url) {
-      console.log('UPLOAD SUCCESS, URL:', result.secure_url);
-      return result.secure_url;
-    }
-
-    const cloudinaryMessage = result.error?.message || '';
-    const isPresetError = /upload[_ ]preset|preset/i.test(cloudinaryMessage);
-    if (!isPresetError) {
-      console.error('CLOUDINARY ERROR (non-preset):', cloudinaryMessage);
-      throw new Error(cloudinaryMessage || `Cloudinary rejeitou o upload (${response.status}).`);
-    }
-    console.warn('PRESET REJECTED:', cloudinaryMessage);
-    lastPresetError = cloudinaryMessage;
-  }
-
-  throw new Error(
-    `Nenhum preset válido foi encontrado no Cloudinary. Última resposta: ${lastPresetError || 'erro 400'}.`
-  );
-};
-
-const getFirestoreError = (error, action) => {
-  if (error?.code === 'permission-denied') {
-    return `Permissão negada ao ${action}. Publique as regras do Firestore para profiles e items.`;
-  }
-
-  if (error?.code === 'unavailable' || error?.code === 'failed-precondition') {
-    return `Não foi possível ${action} agora. Verifique a conexão e o Firestore.`;
-  }
-
-  return `Falha ao ${action}. Tente novamente.`;
-};
+const UPLOAD_PRESET = 'Fotos Itens';
 
 const getFriendlyAuthError = (error, action) => {
   const code = error?.code || '';
-
   const messages = {
     'auth/invalid-email': 'O e-mail informado está inválido. Verifique e tente novamente.',
     'auth/user-disabled': 'Essa conta foi desativada. Entre em contato com o suporte.',
@@ -139,6 +76,97 @@ const getFriendlyAuthError = (error, action) => {
   return messages[code] || `Não foi possível ${action}. Tente novamente.`;
 };
 
+const getFirestoreError = (error, action) => {
+  if (error?.code === 'permission-denied') {
+    return `Permissão negada ao ${action}. Publique as regras do Firestore para profiles e items.`;
+  }
+
+  if (error?.code === 'unavailable' || error?.code === 'failed-precondition') {
+    return `Não foi possível ${action} agora. Verifique a conexão e o Firestore.`;
+  }
+
+  return `Falha ao ${action}. Tente novamente.`;
+};
+
+const getMimeType = (uri = '', fileName = '') => {
+  const candidate = (fileName || uri).split('?')[0].split('/').pop().toLowerCase();
+  const extension = candidate.includes('.') ? candidate.split('.').pop() : '';
+  const map = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    heic: 'image/heic',
+  };
+
+  return map[extension] || 'image/jpeg';
+};
+
+const uploadImage = async (uri, fileName) => {
+  if (!uri) {
+    throw new Error('URI inválida para upload.');
+  }
+
+  const normalizedFileName = fileName || `upload-${Date.now()}.jpg`;
+  const mimeType = getMimeType(uri, normalizedFileName);
+
+  // Debug logs
+  console.log('[ANDROID UPLOAD] START');
+  console.log('[ANDROID UPLOAD] URI:', uri);
+  console.log('[ANDROID UPLOAD] FILE NAME:', normalizedFileName);
+
+  // New Expo File API
+  const file = new ExpoFile([uri], normalizedFileName, { type: mimeType });
+  console.log('[ANDROID FILE] EXISTS:', file.exists);
+  console.log('[ANDROID FILE] SIZE:', file.size ?? 0);
+  console.log('[ANDROID FILE] TYPE:', file.type ?? mimeType);
+  console.log('[ANDROID FILE] NAME:', file.name ?? normalizedFileName);
+  console.log('[ANDROID FILE] URI:', file.uri);
+
+  if (!file.exists || !(file.size && file.size > 0)) {
+    throw new Error('Arquivo de imagem Android não existe ou está vazio.');
+  }
+
+  const formData = new FormData();
+  // Prefer direct File in FormData; fallback to bytes if needed
+  if (typeof file.bytes === 'function') {
+    try {
+      const bytes = await file.bytes();
+      const blob = new Blob([bytes], { type: mimeType });
+      formData.append('file', blob, file.name ?? normalizedFileName);
+    } catch (e) {
+      // If bytes retrieval fails, fallback to raw object
+      formData.append('file', { uri, name: normalizedFileName, type: mimeType });
+    }
+  } else {
+    formData.append('file', file);
+  }
+  formData.append('upload_preset', UPLOAD_PRESET);
+
+  console.log('[ANDROID UPLOAD] CLOUDINARY STATUS: sending');
+  const cloudinaryResponse = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
+    {
+      method: 'POST',
+      body: formData,
+    }
+  );
+
+  console.log('[ANDROID CLOUDINARY] STATUS:', cloudinaryResponse.status);
+  const result = await cloudinaryResponse.json();
+  console.log('[ANDROID CLOUDINARY] RESPONSE:', JSON.stringify(result));
+
+  if (cloudinaryResponse.ok && typeof result?.secure_url === 'string' && result.secure_url) {
+    console.log('[ANDROID CLOUDINARY] SECURE URL:', result.secure_url);
+    return result.secure_url;
+  }
+
+  const errorMessage = result?.error?.message || `Cloudinary rejeitou o upload (${cloudinaryResponse.status}).`;
+  console.error('[ANDROID UPLOAD ERROR]', errorMessage);
+  throw new Error(errorMessage);
+};
+
 export default function App() {
   const [screen, setScreen] = useState('login');
   const [fullName, setFullName] = useState('');
@@ -147,46 +175,60 @@ export default function App() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState('lost');
-
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [foundItems, setFoundItems] = useState([]);
-  // Tracks upload status to avoid concurrent uploads
   const [isUploading, setIsUploading] = useState(false);
-
   const [itemName, setItemName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [itemLocation, setItemLocation] = useState('');
   const [itemCategory, setItemCategory] = useState('');
   const [itemImage, setItemImage] = useState(null);
   const [itemType, setItemType] = useState('found');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setActiveView('lost');
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
   useEffect(() => {
     if (!user) {
       return;
     }
 
     const loadUserData = async () => {
-      let profile = null;
-
       try {
         const profileSnapshot = await getDoc(doc(db, 'profiles', user.uid));
-        profile = profileSnapshot.exists() ? profileSnapshot.data() : null;
+        const profile = profileSnapshot.exists() ? profileSnapshot.data() : null;
 
         if (profile?.photoUrl) {
           setProfileImage(profile.photoUrl);
+        } else {
+          setProfileImage('');
         }
+
+        setProfileName(profile?.name || user.displayName || '');
       } catch (error) {
         setStatus({ type: 'error', text: getFirestoreError(error, 'carregar o perfil') });
       }
 
-      setProfileName(profile?.name || user.displayName || '');
-
       try {
         const itemsSnapshot = await getDocs(collection(db, 'items'));
         const items = itemsSnapshot.docs
-          .map((itemSnapshot) => ({ id: itemSnapshot.id, ...itemSnapshot.data() }))
-          .sort((first, second) => (second.foundAt || '').localeCompare(first.foundAt || ''));
+          .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+          .sort((first, second) => {
+            const firstDate = new Date(first.createdAt || first.foundAt || 0).getTime();
+            const secondDate = new Date(second.createdAt || second.foundAt || 0).getTime();
+            return secondDate - firstDate;
+          });
+
         setFoundItems(items);
       } catch (error) {
         setFoundItems([]);
@@ -216,19 +258,18 @@ export default function App() {
 
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const userData = userCredential.user;
       const normalizedName = fullName.trim();
 
-      await updateProfile(userData, { displayName: normalizedName });
-      await setDoc(doc(db, 'profiles', userData.uid), {
+      await updateProfile(userCredential.user, { displayName: normalizedName });
+      await setDoc(doc(db, 'profiles', userCredential.user.uid), {
         name: normalizedName,
-        email: userData.email,
+        email: userCredential.user.email,
         photoUrl: '',
       });
 
-      setUser(userData);
+      setUser(userCredential.user);
       setProfileName(normalizedName);
-      setProfileImage(null);
+      setProfileImage('');
       setActiveView('lost');
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
@@ -270,11 +311,15 @@ export default function App() {
   };
 
   const handlePickProfileImage = async () => {
+    if (isUploading) {
+      return;
+    }
+
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permission.granted) {
-        setStatus({ type: 'error', text: 'Permita o acesso às fotos para trocar sua imagem.' });
+        setStatus({ type: 'error', text: 'Permita o acesso às fotos para selecionar uma imagem.' });
         return;
       }
 
@@ -282,25 +327,114 @@ export default function App() {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 1,
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+
+      const localUri = result.assets[0].uri;
+      if (!user) {
+        return;
+      }
+
+      setIsUploading(true);
+      const photoUrl = await uploadImage(localUri, `profile-${user.uid}.jpg`);
+      await setDoc(
+        doc(db, 'profiles', user.uid),
+        {
+          name: profileName || user.displayName || '',
+          email: user.email || '',
+          photoUrl,
+        },
+        { merge: true },
+      );
+
+      setProfileImage(photoUrl);
+      setStatus({ type: 'success', text: 'Foto de perfil salva com sucesso.' });
+    } catch (error) {
+      console.error('[UPLOAD ERROR]', error);
+      setStatus({ type: 'error', text: 'Não foi possível enviar a imagem. Tente novamente.' });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handlePickItemImage = async () => {
+    if (isUploading) {
+      return;
+    }
+
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        setStatus({ type: 'error', text: 'Permita o acesso às fotos para selecionar uma imagem.' });
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
       });
 
       if (!result.canceled && result.assets?.[0]?.uri) {
-        const localUri = result.assets[0].uri;
-
-        if (user) {
-          const photoUrl = await uploadImage(localUri, `profile-${user.uid}.jpg`);
-          await setDoc(
-            doc(db, 'profiles', user.uid),
-            { name: profileName || user.displayName || '', email: user.email || '', photoUrl },
-            { merge: true },
-          );
-          setProfileImage(photoUrl);
-          setStatus({ type: 'success', text: 'Foto de perfil salva com sucesso.' });
-        }
+        setItemImage(result.assets[0].uri);
+        setStatus({ type: 'success', text: 'Imagem selecionada. Agora basta salvar.' });
       }
     } catch (error) {
-        setStatus({ type: 'error', text: `Não foi possível salvar a foto: ${error?.message || 'erro desconhecido'}` });
+      console.error('[UPLOAD ERROR]', error);
+      setStatus({ type: 'error', text: 'Erro ao escolher imagem.' });
+    }
+  };
+
+  const handleAddItem = async () => {
+    if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
+      setStatus({ type: 'error', text: 'Preencha todos os campos.' });
+      return;
+    }
+
+    if (isUploading) {
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const imageUrl = itemImage ? await uploadImage(itemImage, `item-${Date.now()}.jpg`) : '';
+      const safeImageUrl = typeof imageUrl === 'string' ? imageUrl : '';
+      console.log('[ANDROID UPLOAD] FIRESTORE SAVE:', safeImageUrl ? 'with image' : 'without image');
+
+      const itemData = {
+        name: itemName.trim(),
+        description: itemDescription.trim(),
+        location: itemLocation.trim(),
+        category: itemCategory.trim(),
+        type: itemType,
+        imageUrl: safeImageUrl,
+        createdAt: new Date().toISOString(),
+        foundAt: new Date().toISOString(),
+        userId: user ? user.uid : null,
+      };
+
+      const itemReference = await addDoc(collection(db, 'items'), itemData);
+      setFoundItems((currentItems) => [{ id: itemReference.id, ...itemData }, ...currentItems]);
+
+      setStatus({ type: 'success', text: 'Item cadastrado com sucesso.' });
+      setItemName('');
+      setItemDescription('');
+      setItemLocation('');
+      setItemCategory('');
+      setItemImage(null);
+      setActiveView(itemType === 'lost' ? 'lost' : 'found');
+    } catch (error) {
+      console.error('[UPLOAD ERROR]', error);
+      setStatus({ type: 'error', text: 'Não foi possível enviar a imagem. Tente novamente.' });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -327,10 +461,7 @@ export default function App() {
       const code = error?.code || '';
 
       if (code === 'auth/requires-recent-login') {
-        setStatus({
-          type: 'error',
-          text: 'Para excluir a conta, faça login novamente e tente outra vez.',
-        });
+        setStatus({ type: 'error', text: 'Para excluir a conta, faça login novamente e tente outra vez.' });
         setConfirmDelete(false);
         return;
       }
@@ -340,129 +471,141 @@ export default function App() {
     }
   };
 
-  if (user && activeView === 'profile') {
-    return (
-      <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <ScrollView contentContainerStyle={styles.authContainer}>
-          <TouchableOpacity onPress={() => setActiveView('lost')} style={styles.backButton}>
-            <Text style={styles.backButtonText}>{'←'}</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Meu perfil</Text>
+  const renderItemList = (type) => {
+    const filteredItems = foundItems.filter((item) => (item.type || 'found') === type);
 
-          <View style={styles.profileImageContainer}>
-            <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage}>
-              <Image
-                source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
-                style={styles.profileImageHome}
-                resizeMode="cover"
-              />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.changeImageText}>Toque na imagem para trocar</Text>
-          <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
+    if (!filteredItems.length) {
+      return (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{type === 'lost' ? 'Nenhum item perdido ainda' : 'Nenhum item achado ainda'}</Text>
+        </View>
+      );
+    }
 
-          <View style={styles.profileTabRow}>
-            <View style={[styles.profileTabButton, styles.profileTabButtonActive]}>
-              <Text style={[styles.tabText, styles.tabTextActive]}>Postagens de itens perdidos</Text>
-            </View>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Nenhuma postagem ainda</Text>
-            <Text style={styles.cardText}>As postagens de itens perdidos aparecerão aqui.</Text>
-          </View>
-
-          {status.text ? (
-            <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>
-              {status.text}
-            </Text>
-          ) : null}
-
-          <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
-            <Text style={styles.buttonText}>Sair</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
-            <Text style={styles.buttonText}>Excluir conta</Text>
-          </TouchableOpacity>
-
-          {confirmDelete && (
-            <View style={styles.confirmBox}>
-              <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
-              <Text style={styles.confirmText}>
-                Essa ação apagará sua conta permanentemente. Deseja continuar?
-              </Text>
-
-              <View style={styles.confirmActions}>
-                <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
-                  <Text style={styles.cancelButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
-                  <Text style={styles.buttonText}>Excluir</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-        </ScrollView>
-      </SafeAreaView></SafeAreaProvider>
-    );
-  }
+    return filteredItems.map((item) => (
+      <View style={styles.card} key={item.id}>
+        {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
+        <Text style={styles.cardTitle}>{item.name}</Text>
+        <Text style={styles.cardText}>{item.description}</Text>
+        <Text style={styles.cardText}>Local: {item.location}</Text>
+        <Text style={styles.cardText}>Categoria: {item.category}</Text>
+        <Text style={styles.cardText}>Tipo: {type === 'lost' ? 'Item perdido' : 'Item achado'}</Text>
+      </View>
+    ));
+  };
 
   if (user) {
-    // Main menu after login
-    
-      return (
-        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <View style={styles.authContainer}>
             <View style={styles.tabRow}>
-              <TouchableOpacity
-                style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]}
-                onPress={() => setActiveView('lost')}
-              >
+              <TouchableOpacity style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]} onPress={() => setActiveView('lost')}>
                 <Text style={[styles.tabText, activeView === 'lost' && styles.tabTextActive]}>Itens Perdidos</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tabButton, activeView === 'found' && styles.tabButtonActive]}
-                onPress={() => setActiveView('found')}
-              >
+              <TouchableOpacity style={[styles.tabButton, activeView === 'found' && styles.tabButtonActive]} onPress={() => setActiveView('found')}>
                 <Text style={[styles.tabText, activeView === 'found' && styles.tabTextActive]}>Itens Achados</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tabButton, activeView === 'profile' && styles.tabButtonActive]}
-                onPress={() => setActiveView('profile')}
-              >
+              <TouchableOpacity style={[styles.tabButton, activeView === 'profile' && styles.tabButtonActive]} onPress={() => setActiveView('profile')}>
                 <Text style={[styles.tabText, activeView === 'profile' && styles.tabTextActive]}>Perfil</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.profileImageButton}>
-                <Image
-                  source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
-                  style={styles.profileImageHome}
-                  resizeMode="cover"
-                />
+                <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
               </TouchableOpacity>
             </View>
+
             {activeView === 'lost' && (
-              <View style={styles.container}>
+              <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
                 <Text style={styles.title}>Itens Perdidos</Text>
                 <TouchableOpacity
                   style={styles.buttonPrimary}
-                  onPress={() => { setItemType('lost'); setActiveView('addItem'); }}
+                  onPress={() => {
+                    setItemType('lost');
+                    setActiveView('addItem');
+                  }}
+                  disabled={isUploading}
                 >
                   <Text style={styles.buttonText}>Cadastrar Item Perdido</Text>
                 </TouchableOpacity>
-                {/* Items list will be rendered in the separate lost view below */}
-              </View>
+                {renderItemList('lost')}
+              </ScrollView>
             )}
-            {/* The rest of the UI (found, profile, addItem) is handled in their own conditional blocks below */}
+
+            {activeView === 'found' && (
+              <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+                <Text style={styles.title}>Itens Achados</Text>
+                <TouchableOpacity
+                  style={styles.buttonPrimary}
+                  onPress={() => {
+                    setItemType('found');
+                    setActiveView('addItem');
+                  }}
+                  disabled={isUploading}
+                >
+                  <Text style={styles.buttonText}>Cadastrar Item Achado</Text>
+                </TouchableOpacity>
+                {renderItemList('found')}
+              </ScrollView>
+            )}
+
+            {activeView === 'profile' && (
+              <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+                <TouchableOpacity onPress={() => setActiveView('lost')} style={styles.backButton}>
+                  <Text style={styles.backButtonText}>{'←'}</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Meu perfil</Text>
+                <View style={styles.profileImageContainer}>
+                  <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage} disabled={isUploading}>
+                    <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.changeImageText}>Toque na imagem para trocar</Text>
+                <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
+                {status.text ? (
+                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+                ) : null}
+              </ScrollView>
+            )}
+
+            {activeView === 'addItem' && (
+              <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+                <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+                  <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
+                  <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
+                  <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
+                  <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
+                  <TextInput style={styles.input} placeholder="Categoria" value={itemCategory} onChangeText={setItemCategory} />
+
+                  <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handlePickItemImage} disabled={isUploading}>
+                    <Text style={styles.buttonText}>Selecionar Imagem</Text>
+                  </TouchableOpacity>
+
+                  {itemImage ? <Image source={{ uri: itemImage }} style={styles.itemPreview} /> : null}
+
+                  <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handleAddItem} disabled={isUploading}>
+                    {isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar</Text>}
+                  </TouchableOpacity>
+
+                  {status.text ? (
+                    <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+                  ) : null}
+
+                  <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}>
+                    <Text style={styles.tabText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </KeyboardAvoidingView>
+            )}
+
             <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
               <Text style={styles.buttonText}>Sair</Text>
             </TouchableOpacity>
+
             <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
               <Text style={styles.buttonText}>Excluir conta</Text>
             </TouchableOpacity>
+
             {confirmDelete && (
               <View style={styles.confirmBox}>
                 <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
@@ -478,283 +621,56 @@ export default function App() {
               </View>
             )}
           </View>
-        </SafeAreaView></SafeAreaProvider>
-      );
-    }
-    if (activeView === 'lost') {
-      return (
-        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
-          <StatusBar style="dark" />
-          <ScrollView contentContainerStyle={styles.container}>
-            <View style={styles.topNavContainer}>
-              <View style={styles.topNavTabs}>
-                <TouchableOpacity onPress={() => setActiveView('lost')}>
-                  <Text style={styles.topNavTabText}>Itens Perdidos</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setActiveView('found')}>
-                  <Text style={styles.topNavTabText}>Itens Achados</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setActiveView('profile')}>
-                  <Text style={styles.topNavTabText}>Perfil</Text>
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity style={styles.topNavCircle} onPress={() => setActiveView('profile')}>
-                <Text style={styles.topNavCircleText}>🤖</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.title}>Itens Perdidos</Text>
-            <TouchableOpacity
-              style={styles.buttonPrimary}
-              onPress={() => {
-                setItemType('lost');
-                setActiveView('addItem');
-              }}
-            >
-              <Text style={styles.buttonText}>Cadastrar Item Perdido</Text>
-            </TouchableOpacity>
-            {foundItems.filter((item) => (item.type || 'found') === 'lost').length === 0 ? (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Nenhum item perdido ainda</Text>
-              </View>
-            ) : (
-              foundItems
-                .filter((item) => (item.type || 'found') === 'lost')
-                .map((item) => (
-                  <View style={styles.card} key={item.id}>
-                    {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
-                    <Text style={styles.cardTitle}>{item.name}</Text>
-                    <Text style={styles.cardText}>{item.description}</Text>
-                    <Text style={styles.cardText}>Local: {item.location}</Text>
-                    <Text style={styles.cardText}>Categoria: {item.category}</Text>
-                    <Text style={styles.cardText}>Tipo: Item perdido</Text>
-                  </View>
-                ))
-            )}
-            <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView('home')}>
-              <Text style={styles.tabText}>Voltar</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </SafeAreaView></SafeAreaProvider>
-      );
-    }
-    if (activeView === 'found') {
-      return (
-        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
-          <StatusBar style="dark" />
-          <ScrollView contentContainerStyle={styles.container}>
-            <Text style={styles.title}>Itens Achados</Text>
-            <TouchableOpacity
-              style={styles.buttonPrimary}
-              onPress={() => {
-                setItemType('found');
-                setActiveView('addItem');
-              }}
-            >
-              <Text style={styles.buttonText}>Cadastrar Item Achado</Text>
-            </TouchableOpacity>
-            {foundItems.length === 0 ? (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Nenhum item achado ainda</Text>
-              </View>
-            ) : (
-              foundItems.map((item) => (
-                <View style={styles.card} key={item.id}>
-                  {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
-                  <Text style={styles.cardTitle}>{item.name}</Text>
-                  <Text style={styles.cardText}>{item.description}</Text>
-                  <Text style={styles.cardText}>Local: {item.location}</Text>
-                  <Text style={styles.cardText}>Categoria: {item.category}</Text>
-                  <Text style={styles.cardText}>Tipo: Item achado</Text>
-                </View>
-              ))
-            )}
-            <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView('home')}>
-              <Text style={styles.tabText}>Voltar</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </SafeAreaView></SafeAreaProvider>
-      );
-    }
-    // Add Item view
-    if (activeView === 'addItem') {
-      const handlePickItemImage = async () => {
-        try {
-          const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!permission.granted) {
-            setStatus({ type: 'error', text: 'Permita o acesso às fotos para escolher a imagem.' });
-            return;
-          }
-          const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 1,
-          });
-          if (!result.canceled && result.assets?.[0]?.uri) {
-            setItemImage(result.assets[0].uri);
-          }
-        } catch (e) {
-          setStatus({ type: 'error', text: 'Erro ao escolher imagem.' });
-        }
-      };
-
-      const handleAddItem = async () => {
-        if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
-          setStatus({ type: 'error', text: 'Preencha todos os campos.' });
-          return;
-        }
-        try {
-          const imageUrl = itemImage ? await uploadImage(itemImage, `item-${Date.now()}.jpg`) : '';
-          const itemData = {
-            name: itemName,
-            description: itemDescription,
-            location: itemLocation,
-            category: itemCategory,
-              type: itemType,
-            imageUrl,
-            foundAt: new Date().toISOString(),
-            userId: user ? user.uid : null,
-          };
-          const itemReference = await addDoc(collection(db, 'items'), itemData);
-          setFoundItems((currentItems) => [{ id: itemReference.id, ...itemData }, ...currentItems]);
-          setStatus({ type: 'success', text: 'Item cadastrado com sucesso.' });
-          setItemName('');
-          setItemDescription('');
-          setItemLocation('');
-          setItemCategory('');
-          setItemImage(null);
-          setActiveView(itemType === 'lost' ? 'lost' : 'found');
-        } catch (e) {
-          const errorMessage = e?.message || 'erro desconhecido';
-          const normalizedError = errorMessage.toLowerCase();
-          const isPresetError = normalizedError.includes('preset') && normalizedError.includes('cloudinary');
-          setStatus({
-            type: 'error',
-            text: isPresetError
-              ? `${errorMessage}. Crie um preset unsigned com esse nome no Cloudinary.`
-              : `${getFirestoreError(e, 'salvar o item no Firestore')} (${e?.code || errorMessage})`,
-          });
-        }
-      };
-
-      return (
-        <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
-          <StatusBar style="dark" />
-          <ScrollView contentContainerStyle={styles.authContainer}>
-            <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
-            <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
-            <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
-            <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
-            <TextInput style={styles.input} placeholder="Categoria" value={itemCategory} onChangeText={setItemCategory} />
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handlePickItemImage}>
-              <Text style={styles.buttonText}>Selecionar Imagem</Text>
-            </TouchableOpacity>
-            {itemImage && <Image source={{ uri: itemImage }} style={styles.itemPreview} />}
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleAddItem}>
-              <Text style={styles.buttonText}>Salvar</Text>
-            </TouchableOpacity>
-            {status.text && (
-              <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-            )}
-            <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}>
-              <Text style={styles.tabText}>Cancelar</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </SafeAreaView></SafeAreaProvider>
-      );
-    }
-
-
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
 
   return (
-    <SafeAreaProvider><SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Achados e Perdidos</Text>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="dark" />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+            <Text style={styles.title}>Achados e Perdidos</Text>
 
-        <View style={styles.tabRow}>
-          <TouchableOpacity
-            style={[styles.tabButton, screen === 'login' && styles.tabButtonActive]}
-            onPress={() => setScreen('login')}
-          >
-            <Text style={[styles.tabText, screen === 'login' && styles.tabTextActive]}>Entrar</Text>
-          </TouchableOpacity>
+            <View style={styles.tabRow}>
+              <TouchableOpacity style={[styles.tabButton, screen === 'login' && styles.tabButtonActive]} onPress={() => setScreen('login')}>
+                <Text style={[styles.tabText, screen === 'login' && styles.tabTextActive]}>Entrar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tabButton, screen === 'register' && styles.tabButtonActive]} onPress={() => setScreen('register')}>
+                <Text style={[styles.tabText, screen === 'register' && styles.tabTextActive]}>Cadastrar</Text>
+              </TouchableOpacity>
+            </View>
 
-          <TouchableOpacity
-            style={[styles.tabButton, screen === 'register' && styles.tabButtonActive]}
-            onPress={() => setScreen('register')}
-          >
-            <Text style={[styles.tabText, screen === 'register' && styles.tabTextActive]}>Cadastrar</Text>
-          </TouchableOpacity>
-        </View>
+            {screen === 'login' ? (
+              <View style={styles.formBox}>
+                <Text style={styles.sectionTitle}>Login</Text>
+                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
+                  <Text style={styles.buttonText}>Entrar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.formBox}>
+                <Text style={styles.sectionTitle}>Cadastro</Text>
+                <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
+                  <Text style={styles.buttonText}>Cadastrar</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
-        {screen === 'login' ? (
-          <View style={styles.formBox}>
-            <Text style={styles.sectionTitle}>Login</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="E-mail"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Senha"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
-              <Text style={styles.buttonText}>Entrar</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.formBox}>
-            <Text style={styles.sectionTitle}>Cadastro</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Nome completo"
-              value={fullName}
-              onChangeText={setFullName}
-              autoCapitalize="words"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="E-mail"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Senha"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
-              <Text style={styles.buttonText}>Cadastrar</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {status.text ? (
-          <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>
-            {status.text}
-          </Text>
-        ) : null}
-      </ScrollView>
-    </SafeAreaView></SafeAreaProvider>
+            {status.text ? (
+              <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
@@ -812,20 +728,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
   },
-  profileTabRow: {
-    backgroundColor: '#e2eee9',
-    borderRadius: 14,
-    padding: 5,
-    marginBottom: 20,
-  },
-  profileTabButton: {
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  profileTabButtonActive: {
-    backgroundColor: '#ffffff',
-  },
   title: {
     fontSize: 28,
     fontWeight: '800',
@@ -856,39 +758,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  topNavContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#e9f5f0', // very light mint/gray
-    borderRadius: 30,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginHorizontal: 20,
-    marginBottom: 20,
+  tabTextActive: {
+    color: '#153b2e',
   },
-  topNavTabs: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  topNavTabText: {
-    color: '#2c453a', // dark gray/green
-    fontSize: 14,
-    marginHorizontal: 8,
-  },
-  topNavCircle: {
-    backgroundColor: '#1A7A6B',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topNavCircleText: {
-    color: '#fff',
-    fontSize: 20,
-  },
-
   formBox: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
@@ -927,6 +799,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 10,
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   buttonLogout: {
     backgroundColor: '#b45349',
     borderRadius: 12,
@@ -944,26 +819,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: '#e2eee9',
-    borderRadius: 12,
-    minHeight: 46,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 4,
-  },
-  confirmDeleteButton: {
-    flex: 1,
-    backgroundColor: '#b45349',
-    borderRadius: 12,
-    minHeight: 46,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 4,
   },
   buttonText: {
     color: '#fff',
@@ -1026,6 +881,52 @@ const styles = StyleSheet.create({
   },
   successText: {
     color: '#0f766e',
+  },
+  confirmBox: {
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#d8e6df',
+    marginTop: 12,
+  },
+  confirmTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#153b2e',
+    marginBottom: 8,
+  },
+  confirmText: {
+    color: '#527064',
+    marginBottom: 18,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#e2eee9',
+    borderRadius: 12,
+    minHeight: 46,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  cancelButtonText: {
+    color: '#153b2e',
+    fontWeight: '700',
+  },
+  confirmDeleteButton: {
+    flex: 1,
+    backgroundColor: '#b45349',
+    borderRadius: 12,
+    minHeight: 46,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
   },
 });
 
