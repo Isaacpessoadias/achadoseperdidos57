@@ -475,21 +475,8 @@ export default function App() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-            <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-            <View style={styles.tabRow}>
-              <TouchableOpacity style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]} onPress={() => setActiveView('lost')}>
-                <Text style={[styles.tabText, activeView === 'lost' && styles.tabTextActive]}>Itens Perdidos</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tabButton, activeView === 'found' && styles.tabButtonActive]} onPress={() => setActiveView('found')}>
-                <Text style={[styles.tabText, activeView === 'found' && styles.tabTextActive]}>Itens Achados</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tabButton, activeView === 'profile' && styles.tabButtonActive]} onPress={() => setActiveView('profile')}>
-                <Text style={[styles.tabText, activeView === 'profile' && styles.tabTextActive]}>Perfil</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.profileImageButton}>
-                <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
-              </TouchableOpacity>
-            </View>
+            <View style={styles.appShell}>
+              <ScrollView style={styles.screenScroll} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
 
             {activeView === 'lost' && (
               <View>
@@ -527,9 +514,6 @@ export default function App() {
 
             {activeView === 'profile' && (
               <View>
-                <TouchableOpacity onPress={() => setActiveView('lost')} style={styles.backButton}>
-                  <Text style={styles.backButtonText}>{'←'}</Text>
-                </TouchableOpacity>
                 <Text style={styles.title}>Meu perfil</Text>
                 <View style={styles.profileImageContainer}>
                   <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage} disabled={isUploading}>
@@ -541,6 +525,28 @@ export default function App() {
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
+                <View style={styles.accountActions}>
+                  <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
+                    <Text style={styles.buttonText}>Sair</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
+                    <Text style={styles.buttonText}>Excluir conta</Text>
+                  </TouchableOpacity>
+                </View>
+                {confirmDelete && (
+                  <View style={styles.confirmBox}>
+                    <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
+                    <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
+                    <View style={styles.confirmActions}>
+                      <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
+                        <Text style={styles.cancelButtonText}>Cancelar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
+                        <Text style={styles.buttonText}>Excluir</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             )}
 
@@ -571,30 +577,31 @@ export default function App() {
                   </TouchableOpacity>
               </View>
             )}
-
-            <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
-              <Text style={styles.buttonText}>Sair</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
-              <Text style={styles.buttonText}>Excluir conta</Text>
-            </TouchableOpacity>
-
-            {confirmDelete && (
-              <View style={styles.confirmBox}>
-                <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
-                <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
-                <View style={styles.confirmActions}>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
-                    <Text style={styles.cancelButtonText}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
-                    <Text style={styles.buttonText}>Excluir</Text>
-                  </TouchableOpacity>
-                </View>
+              </ScrollView>
+              <View style={styles.bottomBar}>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeView === 'lost' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('lost')}
+                >
+                  <Text style={[styles.bottomNavText, activeView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeView === 'found' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('found')}
+                >
+                  <Text style={[styles.bottomNavText, activeView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, styles.profileNavButton, activeView === 'profile' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('profile')}
+                >
+                  <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileAvatar} resizeMode="cover" />
+                  <Text style={[styles.bottomNavText, styles.profileNavText, activeView === 'profile' && styles.bottomNavTextActive]} numberOfLines={1}>
+                    {profileName || user.displayName || 'Perfil'}
+                  </Text>
+                </TouchableOpacity>
               </View>
-            )}
-            </ScrollView>
+            </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
       </SafeAreaProvider>
@@ -665,20 +672,12 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: '#f4f7f5',
   },
-  backButton: {
-    alignSelf: 'flex-start',
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#e2eee9',
-    marginBottom: 12,
+  appShell: {
+    flex: 1,
+    backgroundColor: '#f4f7f5',
   },
-  backButtonText: {
-    color: '#14532d',
-    fontSize: 25,
-    lineHeight: 28,
+  screenScroll: {
+    flex: 1,
   },
   profileImageButton: {
     alignSelf: 'center',
@@ -779,21 +778,76 @@ const styles = StyleSheet.create({
   },
   buttonLogout: {
     backgroundColor: '#b45349',
-    borderRadius: 12,
-    minHeight: 48,
-    paddingVertical: 13,
+    borderRadius: 10,
+    minHeight: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
   },
   buttonDelete: {
     backgroundColor: '#b45349',
-    borderRadius: 12,
-    minHeight: 48,
-    paddingVertical: 13,
+    borderRadius: 10,
+    minHeight: 38,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 10,
+  },
+  accountActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 68,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#d8e6df',
+  },
+  bottomNavButton: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  bottomNavButtonActive: {
+    backgroundColor: '#e2eee9',
+  },
+  bottomNavText: {
+    color: '#527064',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  bottomNavTextActive: {
+    color: '#153b2e',
+  },
+  profileNavButton: {
+    flex: 1.3,
+  },
+  profileNavText: {
+    flexShrink: 1,
+    textAlign: 'left',
+  },
+  profileAvatar: {
+    width: 28,
+    height: 28,
+    flexShrink: 0,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#b7d8c9',
   },
   buttonText: {
     color: '#fff',
