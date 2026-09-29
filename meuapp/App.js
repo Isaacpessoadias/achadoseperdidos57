@@ -24,8 +24,10 @@ import {
   inMemoryPersistence,
   onAuthStateChanged,
   reauthenticateWithCredential,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signOut,
+  updateEmail,
   updatePassword,
   updateProfile,
 } from 'firebase/auth';
@@ -99,6 +101,7 @@ const getFriendlyAuthError = (error, action) => {
     'auth/user-disabled': 'Essa conta foi desativada. Entre em contato com o suporte.',
     'auth/user-not-found': 'Nenhuma conta foi encontrada com esse e-mail.',
     'auth/wrong-password': 'Senha incorreta. Tente novamente.',
+    'auth/invalid-credential': 'Senha atual incorreta. Confira e tente novamente.',
     'auth/email-already-in-use': 'Esse e-mail já está cadastrado. Faça login ou use outro e-mail.',
     'auth/weak-password': 'A senha deve ter pelo menos 6 caracteres.',
     'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente de novo.',
@@ -279,6 +282,8 @@ export default function App() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState('lost');
+  const [profileReturnView, setProfileReturnView] = useState('lost');
+  const [myItemFilter, setMyItemFilter] = useState('all');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [isEditingAccount, setIsEditingAccount] = useState(false);
@@ -473,9 +478,85 @@ export default function App() {
   }, [activeView, profileSection, user, foundItems]);
 
   const clearForm = () => {
+
+      const startEditingProfileField = (field) => {
+        setEditingProfileField(field);
+        setProfileNameDraft(profileName || user?.displayName || '');
+        setProfileEmailDraft(user?.email || '');
+        setCurrentPassword('');
+        setNewPassword('');
+        setStatus({ type: '', text: '' });
+      };
+
+      const handleSaveProfileField = async () => {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setStatus({ type: 'error', text: 'Entre novamente para editar seu perfil.' });
+          return;
+        }
+
+        if (editingProfileField === 'name' && !profileNameDraft.trim()) {
+          setStatus({ type: 'error', text: 'Informe seu nome para continuar.' });
+          return;
+        }
+
+        if (editingProfileField === 'email' && !profileEmailDraft.trim()) {
+          setStatus({ type: 'error', text: 'Informe um e-mail válido para continuar.' });
+          return;
+        }
+
+        if (editingProfileField !== 'name' && !currentPassword) {
+          setStatus({ type: 'error', text: 'Informe sua senha atual para confirmar a alteração.' });
+          return;
+        }
+
+        if (editingProfileField === 'password' && newPassword.length < 6) {
+          setStatus({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+          return;
+        }
+
+        setIsSavingProfile(true);
+        try {
+          if (editingProfileField === 'name') {
+            const normalizedName = profileNameDraft.trim();
+            await updateProfile(currentUser, { displayName: normalizedName });
+            await setDoc(doc(db, 'profiles', currentUser.uid), { name: normalizedName }, { merge: true });
+            setProfileName(normalizedName);
+            setStatus({ type: 'success', text: 'Seu nome foi atualizado.' });
+          } else {
+            const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+            await reauthenticateWithCredential(currentUser, credential);
+
+            if (editingProfileField === 'email') {
+              const normalizedEmail = profileEmailDraft.trim();
+              await updateEmail(currentUser, normalizedEmail);
+              await setDoc(doc(db, 'profiles', currentUser.uid), { email: normalizedEmail }, { merge: true });
+              await sendEmailVerification(currentUser);
+              setUser(currentUser);
+              setStatus({ type: 'success', text: 'E-mail atualizado. Confira sua caixa de entrada para verificá-lo.' });
+            } else {
+              await updatePassword(currentUser, newPassword);
+              setStatus({ type: 'success', text: 'Sua senha foi atualizada.' });
+            }
+          }
+
+          setEditingProfileField('');
+          setCurrentPassword('');
+          setNewPassword('');
+        } catch (error) {
+          setStatus({ type: 'error', text: getFriendlyAuthError(error, 'atualizar seu perfil') });
+        } finally {
+          setIsSavingProfile(false);
+        }
+      };
     setFullName('');
     setEmail('');
     setPassword('');
+  };
+
+  const openProfile = () => {
+    setProfileReturnView(activeView === 'found' ? 'found' : 'lost');
+    setActiveView('profile');
   };
 
   const handleRegister = async () => {
@@ -756,6 +837,15 @@ export default function App() {
     }
   };
 
+  const renderItemList = (type, ownItemsOnly = false) => {
+    const filteredItems = foundItems.filter((item) => {
+      const matchesType = type === 'all' || (item.type || 'found') === type;
+      const matchesOwner = !ownItemsOnly || item.userId === user?.uid;
+      const matchesCategory = selectedCategory === 'Todas' || item.category === selectedCategory;
+      const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
+      return matchesType && matchesOwner && matchesCategory
+        && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
+    });
   const handleUpdateAccount = async () => {
     const normalizedName = editProfileName.trim();
     const passwordChanged = newPassword.length > 0;
@@ -820,12 +910,44 @@ export default function App() {
 
     if (!filteredItems.length) {
       return (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>{type === 'lost' ? 'Nenhum item perdido ainda' : 'Nenhum item achado ainda'}</Text>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateMark}>◎</Text>
+          <Text style={styles.cardTitle}>
+            {searchQuery || selectedCategory !== 'Todas'
+              ? 'Nenhum resultado encontrado'
+              : ownItemsOnly
+                ? 'Você ainda não publicou nenhum item'
+                : type === 'lost' ? 'Nenhum item perdido por aqui' : 'Nenhum item achado por aqui'}
+          </Text>
+          <Text style={styles.cardText}>Tente ajustar a busca ou confira novamente mais tarde.</Text>
         </View>
       );
     }
 
+    return (
+      <View style={styles.itemGrid}>
+        {filteredItems.map((item) => {
+          const itemIsLost = (item.type || 'found') === 'lost';
+          return (
+            <View style={styles.itemCard} key={item.id}>
+              {item.imageUrl
+                ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
+                : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
+              <View style={styles.itemCardContent}>
+                <View style={[styles.itemTypeBadge, itemIsLost ? styles.itemTypeBadgeLost : styles.itemTypeBadgeFound]}>
+                  <Text style={[styles.itemTypeBadgeText, itemIsLost ? styles.itemTypeBadgeTextLost : styles.itemTypeBadgeTextFound]}>
+                    {itemIsLost ? 'Perdido' : 'Achado'}
+                  </Text>
+                </View>
+                <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.cardText} numberOfLines={2}>{item.description}</Text>
+                <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
     return filteredItems.map((item) => (
       <TouchableOpacity
         style={styles.card}
@@ -856,6 +978,66 @@ export default function App() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+            <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+            {(activeView === 'lost' || activeView === 'found') && (
+              <>
+                <View style={styles.topBar}>
+                  <View style={styles.tabRow}>
+              <TouchableOpacity style={[styles.tabButton, activeView === 'found' && styles.tabButtonActive]} onPress={() => { setSelectedCategory('Todas'); setActiveView('found'); }}>
+                <Text style={[styles.tabText, activeView === 'found' && styles.tabTextActive]}>Achados</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]} onPress={() => { setSelectedCategory('Todas'); setActiveView('lost'); }}>
+                <Text style={[styles.tabText, activeView === 'lost' && styles.tabTextActive]}>Perdidos</Text>
+              </TouchableOpacity>
+                  </View>
+              <TouchableOpacity onPress={openProfile} style={[styles.profileImageButton, styles.navProfileButton]}>
+                <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={[styles.profileImageHome, styles.navAvatar]} resizeMode="cover" />
+              </TouchableOpacity>
+            </View>
+                <Text style={styles.eyebrow}>ACHADOS & PERDIDOS</Text>
+                <Text style={styles.title}>{activeView === 'lost' ? 'Itens perdidos' : 'Itens achados'}</Text>
+                <View style={styles.searchBox}>
+                  <Text style={styles.searchMark}>⌕</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Buscar por nome, local..."
+                    placeholderTextColor="#8B8992"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    returnKeyType="search"
+                  />
+                  {searchQuery ? <TouchableOpacity onPress={() => setSearchQuery('')}><Text style={styles.clearSearch}>×</Text></TouchableOpacity> : null}
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
+                  {['Todas', ...new Set(foundItems.map((item) => item.category).filter(Boolean))].map((category) => (
+                    <TouchableOpacity
+                      key={category}
+                      style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]}
+                      onPress={() => setSelectedCategory(category)}
+                    >
+                      <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
+
+            {activeView === 'lost' && (
+              <View>
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionHeadingTitle}>Perdidos recentemente</Text>
+                  <Text style={styles.resultCount}>{foundItems.filter((item) => item.type === 'lost').length} itens</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.buttonPrimary}
+                  onPress={() => {
+                    setItemType('lost');
+                    setActiveView('addItem');
+                  }}
+                  disabled={isUploading}
+                >
+                  <Text style={styles.buttonText}>+  Publicar item perdido</Text>
+                </TouchableOpacity>
             <View style={styles.appShell}>
               <ScrollView
                 ref={scrollViewRef}
@@ -875,6 +1057,10 @@ export default function App() {
 
             {activeView === 'found' && (
               <View>
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionHeadingTitle}>Achados recentemente</Text>
+                  <Text style={styles.resultCount}>{foundItems.filter((item) => (item.type || 'found') === 'found').length} itens</Text>
+                </View>
                 <Text style={styles.title}>Itens Achados</Text>
                 {renderItemList('found')}
               </View>
@@ -888,6 +1074,7 @@ export default function App() {
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
+                  <Text style={styles.buttonText}>+  Publicar item achado</Text>
                   <Text style={styles.detailBackText}>‹  Voltar aos itens</Text>
                 </TouchableOpacity>
                 {selectedItem.imageUrl ? (
@@ -946,6 +1133,12 @@ export default function App() {
             )}
 
             {activeView === 'profile' && (
+              <View style={styles.profileScreen}>
+                <TouchableOpacity onPress={() => setActiveView(profileReturnView)} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Voltar para a lista">
+                  <Text style={styles.backButtonText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Meu perfil</Text>
+                <View style={styles.profileHero}>
               <View>
                 <Text style={styles.title}>
                   {getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}
@@ -955,6 +1148,109 @@ export default function App() {
                     <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
                   </TouchableOpacity>
                 </View>
+                <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
+                <Text style={styles.profileEmail}>{user.email}</Text>
+                <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
+                  <Text style={styles.changeImageText}>Alterar foto do perfil</Text>
+                </TouchableOpacity>
+                </View>
+                <TouchableOpacity style={styles.profileAction} onPress={() => { setSelectedCategory('Todas'); setSearchQuery(''); setActiveView('myItems'); }}>
+                  <View><Text style={styles.profileActionTitle}>Meus itens</Text><Text style={styles.profileActionSubtitle}>Acompanhe o que você publicou</Text></View>
+                  <Text style={styles.actionArrow}>›</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.profileAction} onPress={() => setActiveView('settings')}>
+                  <View><Text style={styles.profileActionTitle}>Configurações</Text><Text style={styles.profileActionSubtitle}>Conta e segurança</Text></View>
+                  <Text style={styles.actionArrow}>›</Text>
+                </TouchableOpacity>
+                {status.text ? (
+                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+                ) : null}
+              </View>
+            )}
+
+            {activeView === 'myItems' && (
+              <View>
+                <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.backButton}>
+                  <Text style={styles.backButtonText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Meus itens</Text>
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionHeadingTitle}>Suas publicações</Text>
+                  <Text style={styles.resultCount}>{foundItems.filter((item) => item.userId === user.uid).length} itens</Text>
+                </View>
+                <View style={styles.myItemsFilterRow}>
+                  {[
+                    { key: 'all', label: 'Todos' },
+                    { key: 'lost', label: 'Perdidos' },
+                    { key: 'found', label: 'Achados' },
+                  ].map((filter) => (
+                    <TouchableOpacity
+                      key={filter.key}
+                      style={[styles.myItemsFilter, myItemFilter === filter.key && styles.myItemsFilterActive]}
+                      onPress={() => setMyItemFilter(filter.key)}
+                    >
+                      <Text style={[styles.myItemsFilterText, myItemFilter === filter.key && styles.myItemsFilterTextActive]}>{filter.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {renderItemList(myItemFilter, true)}
+              </View>
+            )}
+
+            {activeView === 'settings' && (
+              <View>
+                <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.backButton}>
+                  <Text style={styles.backButtonText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Configurações</Text>
+                <View style={styles.settingsSection}>
+                  <Text style={styles.settingsLabel}>CONTA</Text>
+                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('name')}>
+                    <View><Text style={styles.settingsRowTitle}>Nome</Text><Text style={styles.settingsRowValue}>{profileName || user.displayName || 'Não informado'}</Text></View>
+                    <Text style={styles.settingsEditLabel}>Trocar</Text>
+                  </TouchableOpacity>
+                  <View style={styles.settingsDivider} />
+                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('email')}>
+                    <View><Text style={styles.settingsRowTitle}>E-mail</Text><Text style={styles.settingsRowValue}>{user.email}</Text></View>
+                    <Text style={styles.settingsEditLabel}>Trocar</Text>
+                  </TouchableOpacity>
+                  <View style={styles.settingsDivider} />
+                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('password')}>
+                    <View><Text style={styles.settingsRowTitle}>Senha</Text><Text style={styles.settingsRowValue}>Atualizar senha de acesso</Text></View>
+                    <Text style={styles.settingsEditLabel}>Trocar</Text>
+                  </TouchableOpacity>
+                </View>
+                {editingProfileField ? (
+                  <View style={styles.profileEditForm}>
+                    <Text style={styles.sectionTitle}>
+                      {editingProfileField === 'name' ? 'Alterar nome' : editingProfileField === 'email' ? 'Alterar e-mail' : 'Alterar senha'}
+                    </Text>
+                    {editingProfileField === 'name' ? (
+                      <TextInput style={styles.input} placeholder="Seu nome" value={profileNameDraft} onChangeText={setProfileNameDraft} autoCapitalize="words" />
+                    ) : (
+                      <>
+                        {editingProfileField === 'email' ? (
+                          <TextInput style={styles.input} placeholder="Novo e-mail" value={profileEmailDraft} onChangeText={setProfileEmailDraft} keyboardType="email-address" autoCapitalize="none" />
+                        ) : (
+                          <TextInput style={styles.input} placeholder="Nova senha (mínimo 6 caracteres)" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
+                        )}
+                        <TextInput style={styles.input} placeholder="Senha atual" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
+                      </>
+                    )}
+                    <TouchableOpacity style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]} onPress={handleSaveProfileField} disabled={isSavingProfile}>
+                      {isSavingProfile ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alteração</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setEditingProfileField('')}>
+                      <Text style={styles.cancelEditText}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
+                  <Text style={styles.buttonLogoutText}>Sair da conta</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
+                  <Text style={styles.buttonDeleteText}>Excluir conta</Text>
+                </TouchableOpacity>
                 <Text style={styles.changeImageText}>Toque na imagem para trocar</Text>
                 <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
                 <View style={styles.profileSectionTabs}>
@@ -1133,7 +1429,24 @@ export default function App() {
                     <Text style={styles.buttonText}>Selecionar Imagem</Text>
                   </TouchableOpacity>
 
-                  {itemImage ? <Image source={{ uri: itemImage }} style={styles.itemPreview} /> : null}
+                  {itemImage ? (
+                    <View style={styles.itemPreviewWrap}>
+                      <Image source={{ uri: itemImage }} style={styles.itemPreview} />
+                      <TouchableOpacity
+                        style={styles.removeImageButton}
+                        onPress={() => {
+                          setItemImage(null);
+                          setItemImageFile(null);
+                          setStatus({ type: 'success', text: 'Imagem removida. O item será salvo sem foto.' });
+                        }}
+                        disabled={isUploading}
+                        accessibilityRole="button"
+                        accessibilityLabel="Remover imagem selecionada"
+                      >
+                        <Text style={styles.removeImageText}>Remover imagem</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
 
                   <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handleAddItem} disabled={isUploading}>
                     {isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar</Text>}
@@ -1148,6 +1461,18 @@ export default function App() {
                   </TouchableOpacity>
               </View>
             )}
+
+            {confirmDelete && activeView === 'settings' && (
+              <View style={styles.confirmBox}>
+                <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
+                <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
+                <View style={styles.confirmActions}>
+                  <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
+                    <Text style={styles.cancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
+                    <Text style={styles.buttonText}>Excluir</Text>
+                  </TouchableOpacity>
               </ScrollView>
               {(isItemListView || showScrollTop) && (
                 <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
@@ -1213,6 +1538,18 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+            <View style={styles.authContent}>
+              <Text style={styles.eyebrow}>COMUNIDADE LOCAL</Text>
+              <Text style={styles.authTitle}>Achados e Perdidos</Text>
+              <Text style={styles.authIntro}>Um jeito simples de reencontrar o que importa.</Text>
+
+              <View style={styles.authModeRow}>
+                <TouchableOpacity style={[styles.authModeButton, screen === 'login' && styles.authModeButtonActive]} onPress={() => setScreen('login')}>
+                  <Text style={[styles.authModeText, screen === 'login' && styles.authModeTextActive]}>Entrar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.authModeButton, screen === 'register' && styles.authModeButtonActive]} onPress={() => setScreen('register')}>
+                  <Text style={[styles.authModeText, screen === 'register' && styles.authModeTextActive]}>Criar conta</Text>
           <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
             <Text style={styles.title}>Achados e Perdidos</Text>
 
@@ -1246,11 +1583,34 @@ export default function App() {
                   <Text style={styles.buttonText}>Cadastrar</Text>
                 </TouchableOpacity>
               </View>
-            )}
 
-            {status.text ? (
-              <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-            ) : null}
+              {screen === 'login' ? (
+                <View style={styles.formBox}>
+                  <Text style={styles.sectionTitle}>Boas-vindas</Text>
+                  <Text style={styles.authFormIntro}>Entre na sua conta para continuar.</Text>
+                  <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
+                    <Text style={styles.buttonText}>Entrar</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.formBox}>
+                  <Text style={styles.sectionTitle}>Criar sua conta</Text>
+                  <Text style={styles.authFormIntro}>Leva só um instante para começar.</Text>
+                  <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+                  <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <TextInput style={styles.input} placeholder="Senha (mínimo 6 caracteres)" value={password} onChangeText={setPassword} secureTextEntry />
+                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
+                    <Text style={styles.buttonText}>Criar conta</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {status.text ? (
+                <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+              ) : null}
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -1261,34 +1621,90 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f4f7f5',
+    backgroundColor: '#F7F6FA',
   },
   container: {
     flexGrow: 1,
-    padding: 20,
-    backgroundColor: '#f4f7f5',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
+    backgroundColor: '#F7F6FA',
   },
   authContainer: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#f4f7f5',
+    paddingHorizontal: 22,
+    paddingVertical: 32,
+    backgroundColor: '#F7F6FA',
   },
-  appShell: {
+  authContent: {
+    width: '100%',
+    maxWidth: 460,
+    alignSelf: 'center',
+  },
+  authTitle: {
+    color: '#24212B',
+    fontSize: 30,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  authIntro: {
+    color: '#77727F',
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  authFormIntro: {
+    color: '#77727F',
+    fontSize: 14,
+    marginTop: -10,
+    marginBottom: 18,
+  },
+  authModeRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    backgroundColor: '#EAE7EF',
+    borderRadius: 15,
+    padding: 4,
+    marginBottom: 16,
+  },
+  authModeButton: {
     flex: 1,
-    backgroundColor: '#f4f7f5',
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
   },
-  screenScroll: {
-    flex: 1,
+  authModeButtonActive: {
+    backgroundColor: '#6336C8',
   },
-  containerWithFloatingActions: {
-    paddingBottom: 140,
+  authModeText: {
+    color: '#77727F',
+    fontWeight: '700',
+  },
+  authModeTextActive: {
+    color: '#FFFFFF',
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEE9F8',
+    marginBottom: 12,
+  },
+  backButtonText: {
+    color: '#5B2BBF',
+    fontSize: 25,
+    lineHeight: 28,
   },
   profileImageButton: {
     alignSelf: 'center',
     borderRadius: 72,
     borderWidth: 4,
-    borderColor: '#b7d8c9',
+    borderColor: '#E4DCF4',
     marginBottom: 10,
   },
   profileImageContainer: {
@@ -1302,7 +1718,7 @@ const styles = StyleSheet.create({
     borderRadius: 60,
   },
   changeImageText: {
-    color: '#0f766e',
+    color: '#6336C8',
     fontSize: 13,
     textAlign: 'center',
     marginBottom: 8,
@@ -1310,22 +1726,23 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: 22,
-    color: '#153b2e',
+    textAlign: 'left',
+    marginBottom: 18,
+    color: '#24212B',
   },
   tabRow: {
     flexDirection: 'row',
-    backgroundColor: '#e2eee9',
-    borderRadius: 14,
-    padding: 5,
-    marginBottom: 20,
+    flex: 1,
+    backgroundColor: '#EAE7EF',
+    borderRadius: 15,
+    padding: 4,
+    marginBottom: 0,
   },
   tabButton: {
     flex: 1,
     minHeight: 44,
     paddingVertical: 11,
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1333,19 +1750,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   tabText: {
-    color: '#527064',
+    color: '#77727F',
     fontWeight: '600',
     textAlign: 'center',
   },
   tabTextActive: {
-    color: '#153b2e',
+    color: '#FFFFFF',
   },
   formBox: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#d8e6df',
+    borderColor: '#E9E5EF',
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -1355,18 +1772,18 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     marginBottom: 18,
-    color: '#153b2e',
+    color: '#24212B',
   },
   input: {
-    backgroundColor: '#f8fbf9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 13,
     marginBottom: 14,
     fontSize: 16,
-    color: '#153b2e',
+    color: '#24212B',
   },
   authHint: {
     marginTop: -8,
@@ -1421,152 +1838,39 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   buttonPrimary: {
-    backgroundColor: '#0f766e',
-    borderRadius: 12,
+    backgroundColor: '#6336C8',
+    borderRadius: 14,
     minHeight: 48,
     paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
-    marginBottom: 10,
+    marginTop: 4,
+    marginBottom: 18,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonLogout: {
-    backgroundColor: '#b45349',
-    borderRadius: 10,
-    minHeight: 38,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    minHeight: 48,
+    paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: '#E6E0F0',
   },
   buttonDelete: {
-    backgroundColor: '#b45349',
-    borderRadius: 10,
-    minHeight: 38,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  accountActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 8,
-  },
-  editAccountButton: {
-    minHeight: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    marginBottom: 8,
-    borderRadius: 10,
-    backgroundColor: '#e2eee9',
-  },
-  editAccountButtonText: {
-    color: '#153b2e',
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  accountEditForm: {
-    marginBottom: 8,
-  },
-  bottomBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 68,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#ffffff',
-    borderTopWidth: 1,
-    borderTopColor: '#d8e6df',
-  },
-  floatingActions: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 78,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  floatingActionsEnd: {
-    justifyContent: 'flex-end',
-  },
-  floatingAddButton: {
-    flex: 1,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#0f766e',
-    elevation: 4,
-  },
-  floatingAddButtonText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  scrollTopButton: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 19,
-    borderWidth: 1,
-    borderColor: '#cbded4',
-    backgroundColor: '#ffffff',
-    elevation: 4,
-  },
-  scrollTopText: {
-    color: '#153b2e',
-    fontSize: 23,
-    fontWeight: '700',
-    lineHeight: 28,
-  },
-  bottomNavButton: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-  },
-  bottomNavButtonActive: {
-    backgroundColor: '#e2eee9',
-  },
-  bottomNavText: {
-    color: '#527064',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  bottomNavTextActive: {
-    color: '#153b2e',
-  },
-  profileNavButton: {
-    flex: 1.3,
-  },
-  profileNavText: {
-    flexShrink: 1,
-    textAlign: 'left',
-  },
-  profileAvatar: {
-    width: 28,
-    height: 28,
-    flexShrink: 0,
+    backgroundColor: '#FFF3F2',
     borderRadius: 14,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
     borderWidth: 1,
-    borderColor: '#b7d8c9',
+    borderColor: '#F2D5D2',
   },
   buttonText: {
     color: '#fff',
@@ -1575,7 +1879,7 @@ const styles = StyleSheet.create({
   },
   userText: {
     fontSize: 18,
-    color: '#14532d',
+    color: '#24212B',
     textAlign: 'center',
     fontWeight: '600',
     marginBottom: 20,
@@ -1665,13 +1969,13 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 8,
     padding: 18,
     marginTop: 10,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#d8e6df',
-    shadowColor: '#153b2e',
+    borderColor: '#E9E5EF',
+    shadowColor: '#25202D',
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 1,
@@ -1880,18 +2184,18 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#153b2e',
+    color: '#24212B',
     marginBottom: 8,
   },
   cardText: {
     fontSize: 14,
-    color: '#527064',
+    color: '#77727F',
     lineHeight: 21,
   },
   itemImage: {
     width: '100%',
     height: 180,
-    borderRadius: 12,
+    borderRadius: 8,
     marginBottom: 14,
   },
   detailBackButton: {
@@ -2041,27 +2345,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   errorText: {
-    color: '#b45349',
+    color: '#B42318',
   },
   successText: {
-    color: '#0f766e',
+    color: '#26734D',
   },
   confirmBox: {
     backgroundColor: '#fff',
     borderRadius: 18,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#d8e6df',
+    borderColor: '#E9E5EF',
     marginTop: 12,
   },
   confirmTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#153b2e',
+    color: '#24212B',
     marginBottom: 8,
   },
   confirmText: {
-    color: '#527064',
+    color: '#77727F',
     marginBottom: 18,
   },
   confirmActions: {
@@ -2070,7 +2374,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#EEE9F8',
     borderRadius: 12,
     minHeight: 46,
     paddingVertical: 12,
@@ -2079,18 +2383,335 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   cancelButtonText: {
-    color: '#153b2e',
+    color: '#4A2B88',
     fontWeight: '700',
   },
   confirmDeleteButton: {
     flex: 1,
-    backgroundColor: '#b45349',
+    backgroundColor: '#B42318',
     borderRadius: 12,
     minHeight: 46,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+  },
+  navProfileButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 0,
+    marginBottom: 0,
+    backgroundColor: '#E8E2F1',
+  },
+  navAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+  },
+  eyebrow: {
+    color: '#7656B5',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 6,
+    letterSpacing: 1,
+  },
+  searchBox: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E7E2EC',
+    borderRadius: 15,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+  },
+  searchMark: {
+    color: '#77727F',
+    fontSize: 25,
+    marginRight: 9,
+  },
+  searchInput: {
+    flex: 1,
+    minHeight: 50,
+    color: '#24212B',
+    fontSize: 15,
+  },
+  clearSearch: {
+    color: '#77727F',
+    fontSize: 24,
+    paddingHorizontal: 4,
+  },
+  categoryRow: {
+    gap: 8,
+    paddingBottom: 18,
+  },
+  categoryChip: {
+    minHeight: 36,
+    paddingHorizontal: 15,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECE9F0',
+  },
+  categoryChipActive: {
+    backgroundColor: '#6336C8',
+  },
+  categoryChipText: {
+    color: '#68636F',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  categoryChipTextActive: {
+    color: '#FFFFFF',
+  },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sectionHeadingTitle: {
+    color: '#24212B',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  resultCount: {
+    color: '#89848F',
+    fontSize: 12,
+  },
+  itemGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  itemCard: {
+    width: '48.5%',
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E4EC',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  itemImage: {
+    width: '100%',
+    height: 128,
+    backgroundColor: '#E5E3E8',
+  },
+  itemImagePlaceholder: {
+    width: '100%',
+    height: 128,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E5E3E8',
+  },
+  placeholderMark: {
+    color: '#77727F',
+    fontSize: 36,
+  },
+  itemCardContent: {
+    padding: 10,
+  },
+  itemTypeBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    marginBottom: 8,
+  },
+  itemTypeBadgeLost: {
+    backgroundColor: '#FFF0ED',
+  },
+  itemTypeBadgeFound: {
+    backgroundColor: '#EAF5EF',
+  },
+  itemTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  itemTypeBadgeTextLost: {
+    color: '#B84D36',
+  },
+  itemTypeBadgeTextFound: {
+    color: '#26734D',
+  },
+  itemLocation: {
+    color: '#7656B5',
+    fontSize: 11,
+    marginTop: 7,
+  },
+  emptyState: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 28,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E9E5EF',
+  },
+  emptyStateMark: {
+    color: '#9B82CC',
+    fontSize: 38,
+    marginBottom: 8,
+  },
+  profileScreen: {
+    flex: 1,
+  },
+  profileHero: {
+    alignItems: 'center',
+    paddingTop: 20,
+    paddingBottom: 28,
+  },
+  profileEmail: {
+    color: '#77727F',
+    fontSize: 14,
+    marginTop: -14,
+    marginBottom: 10,
+  },
+  myItemsFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  myItemsFilter: {
+    minHeight: 38,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECE9F0',
+    borderRadius: 12,
+  },
+  myItemsFilterActive: {
+    backgroundColor: '#6336C8',
+  },
+  myItemsFilterText: {
+    color: '#68636F',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  myItemsFilterTextActive: {
+    color: '#FFFFFF',
+  },
+  profileAction: {
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E3EF',
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  profileActionTitle: {
+    color: '#27232E',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  profileActionSubtitle: {
+    color: '#77727F',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  actionArrow: {
+    color: '#7656B5',
+    fontSize: 28,
+  },
+  settingsSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E3EF',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  settingsLabel: {
+    color: '#89848F',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 14,
+  },
+  settingsRow: {
+    gap: 4,
+    paddingVertical: 8,
+  },
+  settingsOption: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  settingsEditLabel: {
+    color: '#6336C8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  profileEditForm: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E3EF',
+    padding: 16,
+    marginTop: 14,
+  },
+  cancelEditText: {
+    color: '#77727F',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingVertical: 10,
+  },
+  settingsRowTitle: {
+    color: '#77727F',
+    fontSize: 12,
+  },
+  settingsRowValue: {
+    color: '#28242F',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  settingsDivider: {
+    height: 1,
+    backgroundColor: '#EEEAF2',
+    marginVertical: 8,
+  },
+  buttonLogoutText: {
+    color: '#6336C8',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  buttonDeleteText: {
+    color: '#B42318',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  itemPreviewWrap: {
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  removeImageButton: {
+    minHeight: 38,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF0ED',
+  },
+  removeImageText: {
+    color: '#B42318',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 
