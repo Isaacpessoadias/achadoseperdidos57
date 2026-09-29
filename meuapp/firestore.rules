@@ -11,6 +11,44 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && request.resource.data.keys().hasOnly(['userId', 'authorName', 'authorPhotoUrl', 'text', 'createdAt'])
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.authorName is string
+          && request.resource.data.authorName.size() > 0
+          && request.resource.data.authorName.size() <= 100
+          && request.resource.data.authorPhotoUrl is string
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.createdAt == request.time;
+        allow update: if request.auth != null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['replies'])
+          && request.resource.data.replies is list
+          && request.resource.data.replies.size() == resource.data.get('replies', []).size() + 1
+          && request.resource.data.replies.hasAll(resource.data.get('replies', []))
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].keys().hasOnly([
+            'userId', 'authorName', 'authorPhotoUrl', 'text', 'createdAt'
+          ])
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].userId == request.auth.uid
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName is string
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName.size() > 0
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName.size() <= 100
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorPhotoUrl is string
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].text is string
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].text.size() > 0
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].text.size() <= 1000
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].createdAt is string;
+        allow delete: if false;
+      }
+    }
+
+    // Collection group queries can only read the signed-in user's comments.
+    match /{path=**}/comments/{commentId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
     }
   }
 }

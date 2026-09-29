@@ -1,7 +1,7 @@
 /* eslint-disable */
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -33,13 +33,19 @@ import {
 } from 'firebase/auth';
 import {
   addDoc,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
   getDoc,
   getDocs,
   getFirestore,
+  onSnapshot,
+  query,
+  serverTimestamp,
   setDoc,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -60,6 +66,33 @@ const db = getFirestore(app);
 const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
+const ITEM_CATEGORIES = [
+  'Documento',
+  'Eletronicos (celular, notebook etc)',
+  'Garrafa',
+  'Material Escolar',
+  'Óculos',
+  'Guarda Chuva',
+  'Bolsa',
+  'Roupas',
+  'Calçados',
+  'Outros',
+];
+const ACCOUNT_DOMAIN_HINT = 'Use e-mail @ifpe.edu.br (servidor) ou @discente.ifpe.edu.br (aluno).';
+
+const getAccountType = (emailAddress) => {
+  const normalizedEmail = (emailAddress || '').trim().toLowerCase();
+
+  if (/^[^@\s]+@discente\.ifpe\.edu\.br$/.test(normalizedEmail)) {
+    return 'student';
+  }
+
+  if (/^[^@\s]+@ifpe\.edu\.br$/.test(normalizedEmail)) {
+    return 'server';
+  }
+
+  return null;
+};
 
 const getFriendlyAuthError = (error, action) => {
   const code = error?.code || '';
@@ -83,7 +116,7 @@ const getFriendlyAuthError = (error, action) => {
 
 const getFirestoreError = (error, action) => {
   if (error?.code === 'permission-denied') {
-    return `Permissão negada ao ${action}. Publique as regras do Firestore para profiles e items.`;
+    return `Permissão negada ao ${action}. Publique as regras do Firestore para profiles, items e comments.`;
   }
 
   if (error?.code === 'unavailable' || error?.code === 'failed-precondition') {
@@ -132,6 +165,115 @@ const uploadImage = async (uri, fileName, webFile) => {
   throw new Error(errorMessage);
 };
 
+function CommentItem({ comment, itemId, user, profileName, profileImage }) {
+  const [isReplying, setIsReplying] = useState(false);
+  const [showReplies, setShowReplies] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
+  const [replyError, setReplyError] = useState('');
+  const replies = Array.isArray(comment.replies) ? comment.replies : [];
+
+  const handleReply = async () => {
+    const text = replyText.trim();
+    if (!text || !user?.uid || isSendingReply) {
+      return;
+    }
+
+    setIsSendingReply(true);
+    setReplyError('');
+    try {
+      await updateDoc(doc(db, 'items', itemId, 'comments', comment.id), {
+        replies: arrayUnion({
+          userId: user.uid,
+          authorName: profileName || user.displayName || user.email || 'Usuário',
+          authorPhotoUrl: profileImage || '',
+          text,
+          createdAt: new Date().toISOString(),
+        }),
+      });
+      setReplyText('');
+      setIsReplying(false);
+      setShowReplies(true);
+    } catch (error) {
+      setReplyError(getFirestoreError(error, 'enviar a resposta'));
+    } finally {
+      setIsSendingReply(false);
+    }
+  };
+
+  return (
+    <View style={styles.commentThread}>
+      <View style={styles.commentRow}>
+        <Image
+          source={comment.authorPhotoUrl ? { uri: comment.authorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+          style={styles.commentAvatar}
+          resizeMode="cover"
+        />
+        <View style={styles.commentContent}>
+          <View style={styles.commentHeader}>
+            <Text style={styles.commentAuthor}>{comment.authorName || 'Usuário'}</Text>
+            <TouchableOpacity
+              style={styles.replyButton}
+              onPress={() => setIsReplying((replying) => !replying)}
+              accessibilityRole="button"
+              accessibilityLabel={`Responder ao comentário de ${comment.authorName || 'usuário'}`}
+            >
+              <Text style={styles.replyButtonText}>Responder</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.commentText}>{comment.text}</Text>
+          {replies.length > 0 && (
+            <TouchableOpacity
+              style={styles.showRepliesButton}
+              onPress={() => setShowReplies((showing) => !showing)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.showRepliesText}>
+                {showReplies ? 'Ocultar respostas' : 'Clique para mostrar as respostas'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+      {isReplying && (
+        <View style={styles.replyComposer}>
+          <TextInput
+            style={styles.replyInput}
+            placeholder="Escreva uma resposta..."
+            value={replyText}
+            onChangeText={setReplyText}
+            multiline
+            maxLength={1000}
+            textAlignVertical="top"
+          />
+          {replyError ? <Text style={styles.errorText}>{replyError}</Text> : null}
+          <TouchableOpacity
+            style={[styles.replySubmitButton, (!replyText.trim() || isSendingReply) && styles.buttonDisabled]}
+            onPress={handleReply}
+            disabled={!replyText.trim() || isSendingReply}
+            accessibilityRole="button"
+          >
+            {isSendingReply ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Enviar resposta</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
+      {showReplies && replies.map((reply, index) => (
+        <View style={styles.replyRow} key={`${reply.userId}-${reply.createdAt}-${index}`}>
+          <Image
+            source={reply.authorPhotoUrl ? { uri: reply.authorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+            style={styles.replyAvatar}
+            resizeMode="cover"
+          />
+          <View style={styles.commentContent}>
+            <Text style={styles.commentAuthor}>{reply.authorName || 'Usuário'}</Text>
+            <Text style={styles.commentText}>{reply.text}</Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState('login');
   const [fullName, setFullName] = useState('');
@@ -144,27 +286,75 @@ export default function App() {
   const [myItemFilter, setMyItemFilter] = useState('all');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
-  const [editingProfileField, setEditingProfileField] = useState('');
-  const [profileNameDraft, setProfileNameDraft] = useState('');
-  const [profileEmailDraft, setProfileEmailDraft] = useState('');
+  const [isEditingAccount, setIsEditingAccount] = useState(false);
+  const [profileSection, setProfileSection] = useState('account');
+  const [commentedItems, setCommentedItems] = useState([]);
+  const [isLoadingCommentedItems, setIsLoadingCommentedItems] = useState(false);
+  const [commentedItemsError, setCommentedItemsError] = useState('');
+  const [editProfileName, setEditProfileName] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [foundItems, setFoundItems] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('Todas');
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [itemComments, setItemComments] = useState([]);
+  const [commentText, setCommentText] = useState('');
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const [commentsError, setCommentsError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [itemName, setItemName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [itemLocation, setItemLocation] = useState('');
   const [itemCategory, setItemCategory] = useState('');
+  const [showCategoryOptions, setShowCategoryOptions] = useState(false);
   const [itemImage, setItemImage] = useState(null);
   const [itemImageFile, setItemImageFile] = useState(null);
   const [itemType, setItemType] = useState('found');
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const scrollViewRef = useRef(null);
+  const isItemListView = activeView === 'lost' || activeView === 'found';
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    if (activeView !== 'itemDetail' || !selectedItem?.id) {
+      return undefined;
+    }
+
+    setIsLoadingComments(true);
+    setCommentsError('');
+    const unsubscribe = onSnapshot(
+      collection(db, 'items', selectedItem.id, 'comments'),
+      (snapshot) => {
+        const comments = snapshot.docs
+          .map((commentSnapshot) => ({ id: commentSnapshot.id, ...commentSnapshot.data() }))
+          .sort((first, second) => {
+            const firstDate = first.createdAt?.toMillis?.() || 0;
+            const secondDate = second.createdAt?.toMillis?.() || 0;
+            return firstDate - secondDate;
+          });
+
+        setItemComments(comments);
+        setIsLoadingComments(false);
+      },
+      (error) => {
+        setCommentsError(getFirestoreError(error, 'carregar os comentários'));
+        setIsLoadingComments(false);
+      },
+    );
+
+    return unsubscribe;
+  }, [activeView, selectedItem]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser && !getAccountType(currentUser.email)) {
+        await signOut(auth);
+        setUser(null);
+        setStatus({ type: 'error', text: ACCOUNT_DOMAIN_HINT });
+        return;
+      }
+
       setUser(currentUser);
       if (currentUser) {
         setActiveView('lost');
@@ -173,6 +363,26 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+    setShowScrollTop(false);
+  }, [activeView]);
+
+  useEffect(() => {
+    const loginSuccessMessage = 'Login realizado com sucesso!';
+    if (status.type !== 'success' || status.text !== loginSuccessMessage) {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      setStatus((currentStatus) => (
+        currentStatus.text === loginSuccessMessage ? { type: '', text: '' } : currentStatus
+      ));
+    }, 4000);
+
+    return () => clearTimeout(timeout);
+  }, [status]);
 
   useEffect(() => {
     if (!user) {
@@ -214,6 +424,58 @@ export default function App() {
 
     loadUserData();
   }, [user]);
+
+  useEffect(() => {
+    if (activeView !== 'profile' || profileSection !== 'commented' || !user) {
+      return;
+    }
+
+    let isActive = true;
+    const loadCommentedItems = async () => {
+      setIsLoadingCommentedItems(true);
+      setCommentedItemsError('');
+      try {
+        const itemIds = new Set();
+        for (let index = 0; index < foundItems.length; index += 10) {
+          if (!isActive) {
+            return;
+          }
+
+          const itemBatch = foundItems.slice(index, index + 10);
+          const commentSnapshots = await Promise.all(itemBatch.map((item) => getDocs(
+            query(
+              collection(db, 'items', item.id, 'comments'),
+              where('userId', '==', user.uid),
+            ),
+          )));
+
+          commentSnapshots.forEach((commentsSnapshot, batchIndex) => {
+            if (!commentsSnapshot.empty) {
+              itemIds.add(itemBatch[batchIndex].id);
+            }
+          });
+        }
+
+        if (isActive) {
+          setCommentedItems(foundItems.filter((item) => itemIds.has(item.id)));
+        }
+      } catch (error) {
+        if (isActive) {
+          setCommentedItemsError(getFirestoreError(error, 'carregar os itens comentados'));
+          setCommentedItems([]);
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingCommentedItems(false);
+        }
+      }
+    };
+
+    loadCommentedItems();
+    return () => {
+      isActive = false;
+    };
+  }, [activeView, profileSection, user, foundItems]);
 
   const clearForm = () => {
 
@@ -303,13 +565,19 @@ export default function App() {
       return;
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!getAccountType(normalizedEmail)) {
+      setStatus({ type: 'error', text: ACCOUNT_DOMAIN_HINT });
+      return;
+    }
+
     if (password.length < 6) {
       setStatus({ type: 'error', text: 'A senha precisa ter pelo menos 6 caracteres.' });
       return;
     }
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       const normalizedName = fullName.trim();
 
       await updateProfile(userCredential.user, { displayName: normalizedName });
@@ -336,8 +604,14 @@ export default function App() {
       return;
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!getAccountType(normalizedEmail)) {
+      setStatus({ type: 'error', text: ACCOUNT_DOMAIN_HINT });
+      return;
+    }
+
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
       setActiveView('lost');
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
@@ -491,6 +765,7 @@ export default function App() {
       setItemDescription('');
       setItemLocation('');
       setItemCategory('');
+      setShowCategoryOptions(false);
       setItemImage(null);
       setItemImageFile(null);
       setActiveView(itemType === 'lost' ? 'lost' : 'found');
@@ -502,6 +777,30 @@ export default function App() {
       setStatus({ type: 'error', text: message });
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleAddComment = async () => {
+    const text = commentText.trim();
+    if (!text || !selectedItem?.id || !user || isSubmittingComment) {
+      return;
+    }
+
+    setIsSubmittingComment(true);
+    setCommentsError('');
+    try {
+      await addDoc(collection(db, 'items', selectedItem.id, 'comments'), {
+        userId: user.uid,
+        authorName: profileName || user.displayName || user.email || 'Usuário',
+        authorPhotoUrl: profileImage || '',
+        text,
+        createdAt: serverTimestamp(),
+      });
+      setCommentText('');
+    } catch (error) {
+      setCommentsError(getFirestoreError(error, 'enviar o comentário'));
+    } finally {
+      setIsSubmittingComment(false);
     }
   };
 
@@ -547,6 +846,67 @@ export default function App() {
       return matchesType && matchesOwner && matchesCategory
         && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
     });
+  const handleUpdateAccount = async () => {
+    const normalizedName = editProfileName.trim();
+    const passwordChanged = newPassword.length > 0;
+
+    if (!normalizedName) {
+      setStatus({ type: 'error', text: 'Informe seu nome.' });
+      return;
+    }
+
+    if (passwordChanged && newPassword.length < 6) {
+      setStatus({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+      return;
+    }
+
+    if (passwordChanged && !currentPassword) {
+      setStatus({ type: 'error', text: 'Informe sua senha atual para alterá-la.' });
+      return;
+    }
+
+    if (!auth.currentUser) {
+      setStatus({ type: 'error', text: 'Nenhuma conta ativa para atualizar.' });
+      return;
+    }
+
+    setIsSavingAccount(true);
+    try {
+      const currentUser = auth.currentUser;
+
+      if (passwordChanged) {
+        const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+        await reauthenticateWithCredential(currentUser, credential);
+        await updatePassword(currentUser, newPassword);
+      }
+
+      await setDoc(
+        doc(db, 'profiles', currentUser.uid),
+        { name: normalizedName, email: currentUser.email || '' },
+        { merge: true },
+      );
+      await updateProfile(currentUser, { displayName: normalizedName });
+
+      setProfileName(normalizedName);
+      setEditProfileName(normalizedName);
+      setCurrentPassword('');
+      setNewPassword('');
+      setIsEditingAccount(false);
+      setStatus({ type: 'success', text: 'Informações da conta atualizadas com sucesso.' });
+    } catch (error) {
+      const message = error?.code === 'auth/wrong-password' || error?.code === 'auth/invalid-credential'
+        ? 'A senha atual está incorreta.'
+        : error?.code?.startsWith('auth/')
+          ? getFriendlyAuthError(error, 'atualizar as informações da conta')
+          : getFirestoreError(error, 'atualizar o perfil');
+      setStatus({ type: 'error', text: message });
+    } finally {
+      setIsSavingAccount(false);
+    }
+  };
+
+  const renderItemList = (type) => {
+    const filteredItems = foundItems.filter((item) => (item.type || 'found') === type);
 
     if (!filteredItems.length) {
       return (
@@ -588,6 +948,28 @@ export default function App() {
         })}
       </View>
     );
+    return filteredItems.map((item) => (
+      <TouchableOpacity
+        style={styles.card}
+        key={item.id}
+        onPress={() => {
+          setSelectedItem(item);
+          setItemComments([]);
+          setCommentText('');
+          setActiveView('itemDetail');
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`Ver detalhes de ${item.name}`}
+        activeOpacity={0.85}
+      >
+        {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
+        <Text style={styles.cardTitle}>{item.name}</Text>
+        <Text style={styles.cardText}>{item.description}</Text>
+        <Text style={styles.cardText}>Local: {item.location}</Text>
+        <Text style={styles.cardText}>Categoria: {item.category}</Text>
+        <Text style={styles.cardText}>Tipo: {type === 'lost' ? 'Item perdido' : 'Item achado'}</Text>
+      </TouchableOpacity>
+    ));
   };
 
   if (user) {
@@ -656,6 +1038,19 @@ export default function App() {
                 >
                   <Text style={styles.buttonText}>+  Publicar item perdido</Text>
                 </TouchableOpacity>
+            <View style={styles.appShell}>
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.screenScroll}
+                contentContainerStyle={[styles.container, (isItemListView || activeView === 'itemDetail') && styles.containerWithFloatingActions]}
+                keyboardShouldPersistTaps="handled"
+                onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
+                scrollEventThrottle={16}
+              >
+
+            {activeView === 'lost' && (
+              <View>
+                <Text style={styles.title}>Itens Perdidos</Text>
                 {renderItemList('lost')}
               </View>
             )}
@@ -666,17 +1061,74 @@ export default function App() {
                   <Text style={styles.sectionHeadingTitle}>Achados recentemente</Text>
                   <Text style={styles.resultCount}>{foundItems.filter((item) => (item.type || 'found') === 'found').length} itens</Text>
                 </View>
+                <Text style={styles.title}>Itens Achados</Text>
+                {renderItemList('found')}
+              </View>
+            )}
+
+            {activeView === 'itemDetail' && selectedItem && (
+              <View>
                 <TouchableOpacity
-                  style={styles.buttonPrimary}
-                  onPress={() => {
-                    setItemType('found');
-                    setActiveView('addItem');
-                  }}
-                  disabled={isUploading}
+                  style={styles.detailBackButton}
+                  onPress={() => setActiveView(selectedItem.type === 'lost' ? 'lost' : 'found')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Voltar para a lista de itens"
                 >
                   <Text style={styles.buttonText}>+  Publicar item achado</Text>
+                  <Text style={styles.detailBackText}>‹  Voltar aos itens</Text>
                 </TouchableOpacity>
-                {renderItemList('found')}
+                {selectedItem.imageUrl ? (
+                  <Image source={{ uri: selectedItem.imageUrl }} style={styles.detailImage} resizeMode="cover" />
+                ) : (
+                  <View style={styles.detailImagePlaceholder}>
+                    <Text style={styles.detailPlaceholderText}>Imagem não disponível</Text>
+                  </View>
+                )}
+                <View style={styles.detailInformation}>
+                  <Text style={styles.detailType}>{selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}</Text>
+                  <Text style={styles.detailTitle}>{selectedItem.name}</Text>
+                  <Text style={styles.detailDescription}>{selectedItem.description}</Text>
+                  <View style={styles.detailDivider} />
+                  <Text style={styles.detailLabel}>Local</Text>
+                  <Text style={styles.detailValue}>{selectedItem.location}</Text>
+                  <Text style={styles.detailLabel}>Categoria</Text>
+                  <Text style={styles.detailValue}>{selectedItem.category}</Text>
+                </View>
+                <View style={styles.commentsSection}>
+                  <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
+                  {commentsError ? <Text style={styles.errorText}>{commentsError}</Text> : null}
+                  {isLoadingComments ? <ActivityIndicator color="#0f766e" /> : null}
+                  <TextInput
+                    style={styles.commentInput}
+                    placeholder="Escreva um comentário..."
+                    value={commentText}
+                    onChangeText={setCommentText}
+                    multiline
+                    maxLength={1000}
+                    textAlignVertical="top"
+                  />
+                  <TouchableOpacity
+                    style={[styles.commentSubmitButton, (!commentText.trim() || isSubmittingComment) && styles.buttonDisabled]}
+                    onPress={handleAddComment}
+                    disabled={!commentText.trim() || isSubmittingComment}
+                    accessibilityRole="button"
+                  >
+                    {isSubmittingComment ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Comentar</Text>}
+                  </TouchableOpacity>
+                  {!isLoadingComments && !itemComments.length && !commentsError ? (
+                    <Text style={styles.emptyComments}>Ainda não há comentários. Comece a conversa.</Text>
+                  ) : null}
+                  {itemComments.map((comment) => (
+                    <CommentItem
+                      key={comment.id}
+                      comment={comment}
+                      itemId={selectedItem.id}
+                      user={user}
+                      profileName={profileName}
+                      profileImage={profileImage}
+                    />
+                  ))}
+                </View>
               </View>
             )}
 
@@ -687,6 +1139,10 @@ export default function App() {
                 </TouchableOpacity>
                 <Text style={styles.title}>Meu perfil</Text>
                 <View style={styles.profileHero}>
+              <View>
+                <Text style={styles.title}>
+                  {getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}
+                </Text>
                 <View style={styles.profileImageContainer}>
                   <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage} disabled={isUploading}>
                     <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
@@ -795,9 +1251,140 @@ export default function App() {
                 <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
                   <Text style={styles.buttonDeleteText}>Excluir conta</Text>
                 </TouchableOpacity>
+                <Text style={styles.changeImageText}>Toque na imagem para trocar</Text>
+                <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
+                <View style={styles.profileSectionTabs}>
+                  <TouchableOpacity
+                    style={[styles.profileSectionTab, profileSection === 'account' && styles.profileSectionTabActive]}
+                    onPress={() => setProfileSection('account')}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: profileSection === 'account' }}
+                  >
+                    <Text style={[styles.profileSectionTabText, profileSection === 'account' && styles.profileSectionTabTextActive]}>
+                      Informações da conta
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.profileSectionTab, profileSection === 'commented' && styles.profileSectionTabActive]}
+                    onPress={() => setProfileSection('commented')}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: profileSection === 'commented' }}
+                  >
+                    <Text style={[styles.profileSectionTabText, profileSection === 'commented' && styles.profileSectionTabTextActive]}>
+                      Itens comentados
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
+                {profileSection === 'account' ? (
+                  <>
+                    <TouchableOpacity
+                      style={styles.editAccountButton}
+                      onPress={() => {
+                        setEditProfileName(profileName || user.displayName || '');
+                        setCurrentPassword('');
+                        setNewPassword('');
+                        setIsEditingAccount((editing) => !editing);
+                      }}
+                    >
+                      <Text style={styles.editAccountButtonText}>{isEditingAccount ? 'Cancelar edição' : 'Alterar informações da conta'}</Text>
+                    </TouchableOpacity>
+                    {isEditingAccount && (
+                  <View style={styles.accountEditForm}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Nome"
+                      value={editProfileName}
+                      onChangeText={setEditProfileName}
+                      autoCapitalize="words"
+                    />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Nova senha (opcional)"
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      secureTextEntry
+                    />
+                    {newPassword.length > 0 && (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Senha atual"
+                        value={currentPassword}
+                        onChangeText={setCurrentPassword}
+                        secureTextEntry
+                      />
+                    )}
+                    <TouchableOpacity
+                      style={[styles.buttonPrimary, isSavingAccount && styles.buttonDisabled]}
+                      onPress={handleUpdateAccount}
+                      disabled={isSavingAccount}
+                    >
+                      {isSavingAccount ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alterações</Text>}
+                    </TouchableOpacity>
+                  </View>
+                    )}
+                  </>
+                ) : (
+                  <View style={styles.commentedItemsSection}>
+                    <Text style={styles.commentedItemsTitle}>Itens em que você comentou</Text>
+                    {isLoadingCommentedItems ? <ActivityIndicator color="#0f766e" /> : null}
+                    {commentedItemsError ? <Text style={styles.errorText}>{commentedItemsError}</Text> : null}
+                    {!isLoadingCommentedItems && !commentedItemsError && !commentedItems.length ? (
+                      <Text style={styles.emptyComments}>Os itens que você comentar aparecerão aqui.</Text>
+                    ) : null}
+                    {commentedItems.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.commentedItemRow}
+                        onPress={() => {
+                          setSelectedItem(item);
+                          setItemComments([]);
+                          setCommentText('');
+                          setActiveView('itemDetail');
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Abrir detalhes de ${item.name}`}
+                      >
+                        {item.imageUrl ? (
+                          <Image source={{ uri: item.imageUrl }} style={styles.commentedItemImage} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.commentedItemImagePlaceholder} />
+                        )}
+                        <View style={styles.commentedItemInfo}>
+                          <Text style={styles.commentedItemName} numberOfLines={2}>{item.name}</Text>
+                          <Text style={styles.commentedItemMeta} numberOfLines={1}>
+                            {item.type === 'lost' ? 'Perdido' : 'Achado'} · {item.location}
+                          </Text>
+                        </View>
+                        <Text style={styles.commentedItemArrow}>›</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+                <View style={styles.accountActions}>
+                  <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
+                    <Text style={styles.buttonText}>Sair</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
+                    <Text style={styles.buttonText}>Excluir conta</Text>
+                  </TouchableOpacity>
+                </View>
+                {confirmDelete && (
+                  <View style={styles.confirmBox}>
+                    <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
+                    <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
+                    <View style={styles.confirmActions}>
+                      <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
+                        <Text style={styles.cancelButtonText}>Cancelar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
+                        <Text style={styles.buttonText}>Excluir</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             )}
 
@@ -807,7 +1394,36 @@ export default function App() {
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
                   <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
-                  <TextInput style={styles.input} placeholder="Categoria" value={itemCategory} onChangeText={setItemCategory} />
+                  <TouchableOpacity
+                    style={styles.categoryPicker}
+                    onPress={() => setShowCategoryOptions((showing) => !showing)}
+                    accessibilityRole="button"
+                    accessibilityLabel={itemCategory || 'Selecionar categoria do item'}
+                  >
+                    <Text style={[styles.categoryPickerText, !itemCategory && styles.categoryPlaceholder]}>
+                      {itemCategory || 'Selecionar categoria'}
+                    </Text>
+                  </TouchableOpacity>
+                  {showCategoryOptions && (
+                    <View style={styles.categoryOptions}>
+                      {ITEM_CATEGORIES.map((category) => (
+                        <TouchableOpacity
+                          key={category}
+                          style={[styles.categoryOption, itemCategory === category && styles.categoryOptionSelected]}
+                          onPress={() => {
+                            setItemCategory(category);
+                            setShowCategoryOptions(false);
+                          }}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: itemCategory === category }}
+                        >
+                          <Text style={[styles.categoryOptionText, itemCategory === category && styles.categoryOptionTextSelected]}>
+                            {category}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
 
                   <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handlePickItemImage} disabled={isUploading}>
                     <Text style={styles.buttonText}>Selecionar Imagem</Text>
@@ -857,10 +1473,60 @@ export default function App() {
                   <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
                     <Text style={styles.buttonText}>Excluir</Text>
                   </TouchableOpacity>
+              </ScrollView>
+              {(isItemListView || showScrollTop) && (
+                <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
+                  {isItemListView && (
+                    <TouchableOpacity
+                      style={styles.floatingAddButton}
+                      onPress={() => {
+                        setItemType(activeView);
+                        setActiveView('addItem');
+                      }}
+                      disabled={isUploading}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.floatingAddButtonText}>
+                        {activeView === 'lost' ? 'Cadastrar item perdido' : 'Cadastrar item achado'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {showScrollTop && (
+                    <TouchableOpacity
+                      style={styles.scrollTopButton}
+                      onPress={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}
+                      accessibilityRole="button"
+                      accessibilityLabel="Voltar ao topo"
+                    >
+                      <Text style={styles.scrollTopText}>↑</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
+              )}
+              <View style={styles.bottomBar}>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeView === 'lost' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('lost')}
+                >
+                  <Text style={[styles.bottomNavText, activeView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeView === 'found' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('found')}
+                >
+                  <Text style={[styles.bottomNavText, activeView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, styles.profileNavButton, activeView === 'profile' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('profile')}
+                >
+                  <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileAvatar} resizeMode="cover" />
+                  <Text style={[styles.bottomNavText, styles.profileNavText, activeView === 'profile' && styles.bottomNavTextActive]} numberOfLines={1}>
+                    {profileName || user.displayName || 'Perfil'}
+                  </Text>
+                </TouchableOpacity>
               </View>
-            )}
-            </ScrollView>
+            </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
       </SafeAreaProvider>
@@ -884,6 +1550,37 @@ export default function App() {
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.authModeButton, screen === 'register' && styles.authModeButtonActive]} onPress={() => setScreen('register')}>
                   <Text style={[styles.authModeText, screen === 'register' && styles.authModeTextActive]}>Criar conta</Text>
+          <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+            <Text style={styles.title}>Achados e Perdidos</Text>
+
+            <View style={styles.tabRow}>
+              <TouchableOpacity style={[styles.tabButton, screen === 'login' && styles.tabButtonActive]} onPress={() => setScreen('login')}>
+                <Text style={[styles.tabText, screen === 'login' && styles.tabTextActive]}>Entrar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tabButton, screen === 'register' && styles.tabButtonActive]} onPress={() => setScreen('register')}>
+                <Text style={[styles.tabText, screen === 'register' && styles.tabTextActive]}>Cadastrar</Text>
+              </TouchableOpacity>
+            </View>
+
+            {screen === 'login' ? (
+              <View style={styles.formBox}>
+                <Text style={styles.sectionTitle}>Login</Text>
+                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
+                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
+                  <Text style={styles.buttonText}>Entrar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.formBox}>
+                <Text style={styles.sectionTitle}>Cadastro</Text>
+                <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
+                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
+                  <Text style={styles.buttonText}>Cadastrar</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1088,6 +1785,58 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#24212B',
   },
+  authHint: {
+    marginTop: -8,
+    marginBottom: 14,
+    color: '#527064',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  categoryPicker: {
+    minHeight: 50,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 8,
+    backgroundColor: '#f8fbf9',
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 12,
+  },
+  categoryPickerText: {
+    fontSize: 16,
+    color: '#153b2e',
+  },
+  categoryPlaceholder: {
+    color: '#7b9187',
+  },
+  categoryOptions: {
+    marginBottom: 14,
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 12,
+  },
+  categoryOption: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5eee9',
+  },
+  categoryOptionSelected: {
+    backgroundColor: '#e2eee9',
+  },
+  categoryOptionText: {
+    fontSize: 15,
+    color: '#527064',
+  },
+  categoryOptionTextSelected: {
+    color: '#153b2e',
+    fontWeight: '700',
+  },
   buttonPrimary: {
     backgroundColor: '#6336C8',
     borderRadius: 14,
@@ -1116,7 +1865,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF3F2',
     borderRadius: 14,
     minHeight: 48,
-    paddingVertical: 13,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
@@ -1135,6 +1884,89 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 20,
   },
+  profileSectionTabs: {
+    flexDirection: 'row',
+    padding: 4,
+    marginBottom: 16,
+    borderRadius: 10,
+    backgroundColor: '#e2eee9',
+  },
+  profileSectionTab: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+    borderRadius: 7,
+  },
+  profileSectionTabActive: {
+    backgroundColor: '#ffffff',
+  },
+  profileSectionTabText: {
+    color: '#527064',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  profileSectionTabTextActive: {
+    color: '#153b2e',
+    fontWeight: '700',
+  },
+  commentedItemsSection: {
+    marginBottom: 10,
+  },
+  commentedItemsTitle: {
+    marginBottom: 8,
+    color: '#153b2e',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  commentedItemRow: {
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#d8e6df',
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+  },
+  commentedItemImage: {
+    width: 58,
+    height: 58,
+    flexShrink: 0,
+    borderRadius: 7,
+    backgroundColor: '#e2eee9',
+  },
+  commentedItemImagePlaceholder: {
+    width: 58,
+    height: 58,
+    flexShrink: 0,
+    borderRadius: 7,
+    backgroundColor: '#e2eee9',
+  },
+  commentedItemInfo: {
+    flex: 1,
+    minWidth: 0,
+    marginLeft: 12,
+  },
+  commentedItemName: {
+    color: '#153b2e',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  commentedItemMeta: {
+    marginTop: 5,
+    color: '#527064',
+    fontSize: 12,
+  },
+  commentedItemArrow: {
+    marginLeft: 8,
+    color: '#0f766e',
+    fontSize: 26,
+    fontWeight: '500',
+  },
   card: {
     backgroundColor: '#ffffff',
     borderRadius: 8,
@@ -1147,6 +1979,207 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 1,
+  },
+  detailBackButton: {
+    minHeight: 42,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 4,
+    marginBottom: 10,
+  },
+  detailBackText: {
+    color: '#0f766e',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  detailImage: {
+    width: '100%',
+    height: 300,
+    borderRadius: 14,
+    backgroundColor: '#e2eee9',
+  },
+  detailImagePlaceholder: {
+    width: '100%',
+    height: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#e2eee9',
+  },
+  detailPlaceholderText: {
+    color: '#527064',
+    fontSize: 14,
+  },
+  detailInformation: {
+    paddingTop: 20,
+    paddingBottom: 22,
+  },
+  detailType: {
+    marginBottom: 7,
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  detailTitle: {
+    marginBottom: 10,
+    color: '#153b2e',
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  detailDescription: {
+    color: '#36584a',
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  detailDivider: {
+    height: 1,
+    marginVertical: 18,
+    backgroundColor: '#d8e6df',
+  },
+  detailLabel: {
+    marginTop: 9,
+    marginBottom: 3,
+    color: '#527064',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  detailValue: {
+    color: '#153b2e',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  commentsSection: {
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: '#d8e6df',
+  },
+  commentsTitle: {
+    marginBottom: 16,
+    color: '#153b2e',
+    fontSize: 21,
+    fontWeight: '800',
+  },
+  emptyComments: {
+    marginBottom: 14,
+    color: '#527064',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  commentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  commentThread: {
+    marginBottom: 18,
+  },
+  commentAvatar: {
+    width: 38,
+    height: 38,
+    flexShrink: 0,
+    marginRight: 10,
+    borderRadius: 19,
+    backgroundColor: '#e2eee9',
+  },
+  commentContent: {
+    flex: 1,
+    paddingTop: 1,
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  commentAuthor: {
+    marginBottom: 3,
+    color: '#153b2e',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  commentText: {
+    color: '#36584a',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  replyButton: {
+    minHeight: 32,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  replyButtonText: {
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  showRepliesButton: {
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingRight: 8,
+  },
+  showRepliesText: {
+    color: '#0f766e',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  replyComposer: {
+    marginLeft: 48,
+    marginTop: 8,
+  },
+  replyInput: {
+    minHeight: 68,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 9,
+    backgroundColor: '#ffffff',
+    color: '#153b2e',
+    fontSize: 14,
+  },
+  replySubmitButton: {
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 7,
+    borderRadius: 9,
+    backgroundColor: '#0f766e',
+  },
+  replyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 12,
+    marginLeft: 48,
+  },
+  replyAvatar: {
+    width: 30,
+    height: 30,
+    flexShrink: 0,
+    marginRight: 9,
+    borderRadius: 15,
+    backgroundColor: '#e2eee9',
+  },
+  commentInput: {
+    minHeight: 84,
+    marginTop: 4,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    color: '#153b2e',
+    fontSize: 15,
+  },
+  commentSubmitButton: {
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    marginBottom: 12,
+    borderRadius: 10,
+    backgroundColor: '#0f766e',
   },
   cardTitle: {
     fontSize: 18,
@@ -1164,6 +2197,138 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: 8,
     marginBottom: 14,
+  },
+  detailBackButton: {
+    alignSelf: 'flex-start',
+    minHeight: 40,
+    justifyContent: 'center',
+    marginBottom: 10,
+    paddingHorizontal: 4,
+  },
+  detailBackText: {
+    color: '#0f766e',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  detailImage: {
+    width: '100%',
+    height: 290,
+    borderRadius: 14,
+    backgroundColor: '#e2eee9',
+  },
+  detailImagePlaceholder: {
+    width: '100%',
+    height: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#e2eee9',
+  },
+  detailPlaceholderText: {
+    color: '#527064',
+    fontSize: 14,
+  },
+  detailInformation: {
+    paddingTop: 20,
+    paddingBottom: 24,
+  },
+  detailType: {
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  detailTitle: {
+    marginTop: 5,
+    marginBottom: 10,
+    color: '#153b2e',
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  detailDescription: {
+    color: '#36594b',
+    fontSize: 16,
+    lineHeight: 24,
+  },
+  detailDivider: {
+    height: 1,
+    marginVertical: 18,
+    backgroundColor: '#d8e6df',
+  },
+  detailLabel: {
+    marginTop: 10,
+    color: '#71847b',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  detailValue: {
+    marginTop: 3,
+    color: '#153b2e',
+    fontSize: 16,
+  },
+  commentsSection: {
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#d8e6df',
+  },
+  commentsTitle: {
+    marginBottom: 16,
+    color: '#153b2e',
+    fontSize: 21,
+    fontWeight: '800',
+  },
+  emptyComments: {
+    marginBottom: 16,
+    color: '#71847b',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  commentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 18,
+  },
+  commentAvatar: {
+    width: 38,
+    height: 38,
+    marginRight: 11,
+    borderRadius: 19,
+    backgroundColor: '#e2eee9',
+  },
+  commentContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  commentAuthor: {
+    marginBottom: 3,
+    color: '#153b2e',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  commentText: {
+    color: '#36594b',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  commentInput: {
+    minHeight: 88,
+    maxHeight: 160,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#cbded4',
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    color: '#153b2e',
+    fontSize: 15,
+  },
+  commentSubmitButton: {
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    borderRadius: 10,
+    backgroundColor: '#0f766e',
   },
   itemPreview: {
     width: 112,
