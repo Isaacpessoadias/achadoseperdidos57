@@ -2,9 +2,6 @@
   "expo": {
     "name": "meuapp",
     "slug": "meuapp",
-    "version": "1.0.0",
-    "plugins": [
-      "expo-status-bar"
-    ]
+    "version": "1.0.0"
   }
 }

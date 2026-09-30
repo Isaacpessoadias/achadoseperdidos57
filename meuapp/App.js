@@ -1,4 +1,3 @@
-/* eslint-disable */
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useRef, useState } from 'react';
@@ -41,11 +40,9 @@ import {
   getDocs,
   getFirestore,
   onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
 } from 'firebase/firestore';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -342,22 +339,15 @@ export default function App() {
   const [profileNameDraft, setProfileNameDraft] = useState('');
   const [profileEmailDraft, setProfileEmailDraft] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [isEditingAccount, setIsEditingAccount] = useState(false);
-  const [profileSection, setProfileSection] = useState('account');
-  const [commentedItems, setCommentedItems] = useState([]);
-  const [isLoadingCommentedItems, setIsLoadingCommentedItems] = useState(false);
-  const [commentedItemsError, setCommentedItemsError] = useState('');
-  const [editProfileName, setEditProfileName] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [foundItems, setFoundItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [itemComments, setItemComments] = useState([]);
+  const [loadedCommentsForItemId, setLoadedCommentsForItemId] = useState(null);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
-  const [isLoadingComments, setIsLoadingComments] = useState(false);
   const [commentsError, setCommentsError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [itemName, setItemName] = useState('');
@@ -379,14 +369,27 @@ export default function App() {
       : activeView === 'itemDetail'
         ? selectedItem?.type || 'found'
         : activeView;
+  const isLoadingComments = activeView === 'itemDetail'
+    && Boolean(selectedItem?.id)
+    && loadedCommentsForItemId !== selectedItem.id
+    && !commentsError;
+
+  const navigateTo = (view) => {
+    setActiveView(view);
+    setShowScrollTop(false);
+    setShowAddMenu(false);
+    setShowCategoryFilters(false);
+    if (view === 'itemDetail') {
+      setCommentsError('');
+    }
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+  };
 
   useEffect(() => {
     if (activeView !== 'itemDetail' || !selectedItem?.id) {
-      return undefined;
+      return;
     }
 
-    setIsLoadingComments(true);
-    setCommentsError('');
     const unsubscribe = onSnapshot(
       collection(db, 'items', selectedItem.id, 'comments'),
       (snapshot) => {
@@ -399,11 +402,11 @@ export default function App() {
           });
 
         setItemComments(comments);
-        setIsLoadingComments(false);
+        setLoadedCommentsForItemId(selectedItem.id);
       },
       (error) => {
         setCommentsError(getFirestoreError(error, 'carregar os comentários'));
-        setIsLoadingComments(false);
+        setLoadedCommentsForItemId(selectedItem.id);
       },
     );
 
@@ -420,20 +423,11 @@ export default function App() {
       }
 
       setUser(currentUser);
-      if (currentUser) {
-        setActiveView('lost');
-      }
+      navigateTo('lost');
     });
 
     return unsubscribe;
   }, []);
-
-  useEffect(() => {
-    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-    setShowScrollTop(false);
-    setShowAddMenu(false);
-    setShowCategoryFilters(false);
-  }, [activeView]);
 
   useEffect(() => {
     const loginSuccessMessage = 'Login realizado com sucesso!';
@@ -490,58 +484,6 @@ export default function App() {
 
     loadUserData();
   }, [user]);
-
-  useEffect(() => {
-    if (activeView !== 'profile' || profileSection !== 'commented' || !user) {
-      return;
-    }
-
-    let isActive = true;
-    const loadCommentedItems = async () => {
-      setIsLoadingCommentedItems(true);
-      setCommentedItemsError('');
-      try {
-        const itemIds = new Set();
-        for (let index = 0; index < foundItems.length; index += 10) {
-          if (!isActive) {
-            return;
-          }
-
-          const itemBatch = foundItems.slice(index, index + 10);
-          const commentSnapshots = await Promise.all(itemBatch.map((item) => getDocs(
-            query(
-              collection(db, 'items', item.id, 'comments'),
-              where('userId', '==', user.uid),
-            ),
-          )));
-
-          commentSnapshots.forEach((commentsSnapshot, batchIndex) => {
-            if (!commentsSnapshot.empty) {
-              itemIds.add(itemBatch[batchIndex].id);
-            }
-          });
-        }
-
-        if (isActive) {
-          setCommentedItems(foundItems.filter((item) => itemIds.has(item.id)));
-        }
-      } catch (error) {
-        if (isActive) {
-          setCommentedItemsError(getFirestoreError(error, 'carregar os itens comentados'));
-          setCommentedItems([]);
-        }
-      } finally {
-        if (isActive) {
-          setIsLoadingCommentedItems(false);
-        }
-      }
-    };
-
-    loadCommentedItems();
-    return () => {
-      isActive = false;
-    };
-  }, [activeView, profileSection, user, foundItems]);
 
   const clearForm = () => {
     setFullName('');
@@ -620,7 +562,7 @@ export default function App() {
         }
       };
   const openProfile = () => {
-    setActiveView('profile');
+    navigateTo('profile');
   };
 
   const handleRegister = async () => {
@@ -654,7 +596,7 @@ export default function App() {
       setUser(userCredential.user);
       setProfileName(normalizedName);
       setProfileImage('');
-      setActiveView('lost');
+      navigateTo('lost');
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
     } catch (error) {
@@ -677,7 +619,7 @@ export default function App() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
-      setActiveView('lost');
+      navigateTo('lost');
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
       clearForm();
     } catch (error) {
@@ -691,7 +633,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('lost');
+      navigateTo('lost');
       setStatus({ type: 'success', text: 'Você saiu da conta com sucesso.' });
       clearForm();
       setScreen('login');
@@ -832,7 +774,7 @@ export default function App() {
       setShowCategoryOptions(false);
       setItemImage(null);
       setItemImageFile(null);
-      setActiveView(itemType === 'lost' ? 'lost' : 'found');
+      navigateTo(itemType === 'lost' ? 'lost' : 'found');
     } catch (error) {
       console.error(`[${uploadStage === 'image' ? 'IMAGE UPLOAD' : 'ITEM SAVE'} ERROR]`, error);
       const message = uploadStage === 'image'
@@ -882,7 +824,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('lost');
+      navigateTo('lost');
       setStatus({ type: 'success', text: 'Sua conta foi excluída com sucesso.' });
       clearForm();
       setScreen('login');
@@ -898,65 +840,6 @@ export default function App() {
 
       setStatus({ type: 'error', text: getFriendlyAuthError(error, 'excluir a conta') });
       setConfirmDelete(false);
-    }
-  };
-
-  const handleUpdateAccount = async () => {
-    const normalizedName = editProfileName.trim();
-    const passwordChanged = newPassword.length > 0;
-
-    if (!normalizedName) {
-      setStatus({ type: 'error', text: 'Informe seu nome.' });
-      return;
-    }
-
-    if (passwordChanged && newPassword.length < 6) {
-      setStatus({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
-      return;
-    }
-
-    if (passwordChanged && !currentPassword) {
-      setStatus({ type: 'error', text: 'Informe sua senha atual para alterá-la.' });
-      return;
-    }
-
-    if (!auth.currentUser) {
-      setStatus({ type: 'error', text: 'Nenhuma conta ativa para atualizar.' });
-      return;
-    }
-
-    setIsSavingAccount(true);
-    try {
-      const currentUser = auth.currentUser;
-
-      if (passwordChanged) {
-        const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
-        await reauthenticateWithCredential(currentUser, credential);
-        await updatePassword(currentUser, newPassword);
-      }
-
-      await setDoc(
-        doc(db, 'profiles', currentUser.uid),
-        { name: normalizedName, email: currentUser.email || '' },
-        { merge: true },
-      );
-      await updateProfile(currentUser, { displayName: normalizedName });
-
-      setProfileName(normalizedName);
-      setEditProfileName(normalizedName);
-      setCurrentPassword('');
-      setNewPassword('');
-      setIsEditingAccount(false);
-      setStatus({ type: 'success', text: 'Informações da conta atualizadas com sucesso.' });
-    } catch (error) {
-      const message = error?.code === 'auth/wrong-password' || error?.code === 'auth/invalid-credential'
-        ? 'A senha atual está incorreta.'
-        : error?.code?.startsWith('auth/')
-          ? getFriendlyAuthError(error, 'atualizar as informações da conta')
-          : getFirestoreError(error, 'atualizar o perfil');
-      setStatus({ type: 'error', text: message });
-    } finally {
-      setIsSavingAccount(false);
     }
   };
 
@@ -998,8 +881,10 @@ export default function App() {
               onPress={() => {
                 setSelectedItem(item);
                 setItemComments([]);
+                setCommentsError('');
+                setLoadedCommentsForItemId(null);
                 setCommentText('');
-                setActiveView('itemDetail');
+                navigateTo('itemDetail');
               }}
               accessibilityRole="button"
               accessibilityLabel={`Ver detalhes de ${item.name}, categoria ${normalizeItemCategory(item.category)}`}
@@ -1027,28 +912,6 @@ export default function App() {
         })}
       </View>
     );
-    return filteredItems.map((item) => (
-      <TouchableOpacity
-        style={styles.card}
-        key={item.id}
-        onPress={() => {
-          setSelectedItem(item);
-          setItemComments([]);
-          setCommentText('');
-          setActiveView('itemDetail');
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={`Ver detalhes de ${item.name}`}
-        activeOpacity={0.85}
-      >
-        {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
-        <Text style={styles.cardTitle}>{item.name}</Text>
-        <Text style={styles.cardText}>{item.description}</Text>
-        <Text style={styles.cardText}>Local: {item.location}</Text>
-        <Text style={styles.cardText}>Categoria: {item.category}</Text>
-        <Text style={styles.cardText}>Tipo: {type === 'lost' ? 'Item perdido' : 'Item achado'}</Text>
-      </TouchableOpacity>
-    ));
   };
 
   if (user) {
@@ -1149,7 +1012,7 @@ export default function App() {
               <View>
                 <TouchableOpacity
                   style={styles.detailBackButton}
-                  onPress={() => setActiveView(selectedItem.type === 'lost' ? 'lost' : 'found')}
+                  onPress={() => navigateTo(selectedItem.type === 'lost' ? 'lost' : 'found')}
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
@@ -1232,11 +1095,11 @@ export default function App() {
                 </TouchableOpacity>
                 </View>
                 </View>
-                <TouchableOpacity style={styles.profileAction} onPress={() => { setSelectedCategory('Todas'); setSearchQuery(''); setActiveView('myItems'); }}>
+                <TouchableOpacity style={styles.profileAction} onPress={() => { setSelectedCategory('Todas'); setSearchQuery(''); navigateTo('myItems'); }}>
                   <View><Text style={styles.profileActionTitle}>Meus itens</Text><Text style={styles.profileActionSubtitle}>Acompanhe o que você publicou</Text></View>
                   <Text style={styles.actionArrow}>›</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.profileAction} onPress={() => setActiveView('settings')}>
+                <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}>
                   <View><Text style={styles.profileActionTitle}>Configurações</Text><Text style={styles.profileActionSubtitle}>Conta e segurança</Text></View>
                   <Text style={styles.actionArrow}>›</Text>
                 </TouchableOpacity>
@@ -1248,7 +1111,7 @@ export default function App() {
 
             {activeView === 'myItems' && (
               <View>
-                <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.backButton}>
+                <TouchableOpacity onPress={() => navigateTo('profile')} style={styles.backButton}>
                   <Text style={styles.backButtonText}>‹</Text>
                 </TouchableOpacity>
                 <Text style={styles.title}>Meus itens</Text>
@@ -1277,7 +1140,7 @@ export default function App() {
 
             {activeView === 'settings' && (
               <View>
-                <TouchableOpacity onPress={() => setActiveView('profile')} style={styles.backButton}>
+                <TouchableOpacity onPress={() => navigateTo('profile')} style={styles.backButton}>
                   <Text style={styles.backButtonText}>‹</Text>
                 </TouchableOpacity>
                 <Text style={styles.title}>Configurações</Text>
@@ -1353,7 +1216,7 @@ export default function App() {
               <View>
                   <TouchableOpacity
                     style={styles.backButton}
-                    onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}
+                    onPress={() => navigateTo(itemType === 'lost' ? 'lost' : 'found')}
                     accessibilityRole="button"
                     accessibilityLabel="Voltar para os itens"
                   >
@@ -1425,7 +1288,7 @@ export default function App() {
                     <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                   ) : null}
 
-                  <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}>
+                  <TouchableOpacity style={styles.tabButton} onPress={() => navigateTo(itemType === 'lost' ? 'lost' : 'found')}>
                     <Text style={styles.tabText}>Cancelar</Text>
                   </TouchableOpacity>
               </View>
@@ -1456,7 +1319,7 @@ export default function App() {
                             style={styles.addMenuOption}
                             onPress={() => {
                               setItemType('found');
-                              setActiveView('addItem');
+                              navigateTo('addItem');
                             }}
                             accessibilityRole="button"
                           >
@@ -1466,7 +1329,7 @@ export default function App() {
                             style={styles.addMenuOption}
                             onPress={() => {
                               setItemType('lost');
-                              setActiveView('addItem');
+                              navigateTo('addItem');
                             }}
                             accessibilityRole="button"
                           >
@@ -1501,7 +1364,7 @@ export default function App() {
               <View style={styles.bottomBar}>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'lost' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); setActiveView('lost'); }}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('lost'); }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeNavigationView === 'lost' }}
                 >
@@ -1509,7 +1372,7 @@ export default function App() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'found' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); setActiveView('found'); }}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('found'); }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeNavigationView === 'found' }}
                 >
@@ -1720,13 +1583,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     color: '#24212B',
   },
-  tabRow: {
-    flexDirection: 'row',
-    flex: 1,
-    gap: 8,
-    backgroundColor: 'transparent',
-    marginBottom: 0,
-  },
   tabButton: {
     flex: 1,
     minHeight: 40,
@@ -1734,17 +1590,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tabButtonActive: {
-    backgroundColor: '#6336C8',
-  },
   tabText: {
     color: '#77727F',
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
-  },
-  tabTextActive: {
-    color: '#FFFFFF',
   },
   formBox: {
     backgroundColor: '#ffffff',
@@ -1873,223 +1723,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 20,
   },
-  profileSectionTabs: {
-    flexDirection: 'row',
-    padding: 4,
-    marginBottom: 16,
-    borderRadius: 10,
-    backgroundColor: '#e2eee9',
-  },
-  profileSectionTab: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 7,
-    borderRadius: 7,
-  },
-  profileSectionTabActive: {
-    backgroundColor: '#ffffff',
-  },
-  profileSectionTabText: {
-    color: '#527064',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  profileSectionTabTextActive: {
-    color: '#153b2e',
-    fontWeight: '700',
-  },
-  commentedItemsSection: {
-    marginBottom: 10,
-  },
-  commentedItemsTitle: {
-    marginBottom: 8,
-    color: '#153b2e',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  commentedItemRow: {
-    minHeight: 82,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#d8e6df',
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
-  },
-  commentedItemImage: {
-    width: 58,
-    height: 58,
-    flexShrink: 0,
-    borderRadius: 7,
-    backgroundColor: '#e2eee9',
-  },
-  commentedItemImagePlaceholder: {
-    width: 58,
-    height: 58,
-    flexShrink: 0,
-    borderRadius: 7,
-    backgroundColor: '#e2eee9',
-  },
-  commentedItemInfo: {
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 12,
-  },
-  commentedItemName: {
-    color: '#153b2e',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  commentedItemMeta: {
-    marginTop: 5,
-    color: '#527064',
-    fontSize: 12,
-  },
-  commentedItemArrow: {
-    marginLeft: 8,
-    color: '#0f766e',
-    fontSize: 26,
-    fontWeight: '500',
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
-    padding: 18,
-    marginTop: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E9E5EF',
-    shadowColor: '#25202D',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 1,
-  },
-  detailBackButton: {
-    minHeight: 42,
-    justifyContent: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 4,
-    marginBottom: 10,
-  },
-  detailBackText: {
-    color: '#0f766e',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  detailImage: {
-    width: '100%',
-    height: 300,
-    borderRadius: 14,
-    backgroundColor: '#e2eee9',
-  },
-  detailImagePlaceholder: {
-    width: '100%',
-    height: 220,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: '#e2eee9',
-  },
-  detailPlaceholderText: {
-    color: '#527064',
-    fontSize: 14,
-  },
-  detailInformation: {
-    paddingTop: 20,
-    paddingBottom: 22,
-  },
-  detailType: {
-    marginBottom: 7,
-    color: '#0f766e',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  detailTitle: {
-    marginBottom: 10,
-    color: '#153b2e',
-    fontSize: 26,
-    fontWeight: '800',
-  },
-  detailDescription: {
-    color: '#36584a',
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  detailDivider: {
-    height: 1,
-    marginVertical: 18,
-    backgroundColor: '#d8e6df',
-  },
-  detailLabel: {
-    marginTop: 9,
-    marginBottom: 3,
-    color: '#527064',
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  detailValue: {
-    color: '#153b2e',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  commentsSection: {
-    paddingTop: 18,
-    borderTopWidth: 1,
-    borderTopColor: '#d8e6df',
-  },
-  commentsTitle: {
-    marginBottom: 16,
-    color: '#153b2e',
-    fontSize: 21,
-    fontWeight: '800',
-  },
-  emptyComments: {
-    marginBottom: 14,
-    color: '#527064',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  commentRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
   commentThread: {
     marginBottom: 18,
-  },
-  commentAvatar: {
-    width: 38,
-    height: 38,
-    flexShrink: 0,
-    marginRight: 10,
-    borderRadius: 19,
-    backgroundColor: '#e2eee9',
-  },
-  commentContent: {
-    flex: 1,
-    paddingTop: 1,
   },
   commentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
-  },
-  commentAuthor: {
-    marginBottom: 3,
-    color: '#153b2e',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  commentText: {
-    color: '#36584a',
-    fontSize: 14,
-    lineHeight: 21,
   },
   replyButton: {
     minHeight: 32,
@@ -2149,27 +1790,6 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     backgroundColor: '#e2eee9',
   },
-  commentInput: {
-    minHeight: 84,
-    marginTop: 4,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    borderWidth: 1,
-    borderColor: '#cbded4',
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
-    color: '#153b2e',
-    fontSize: 15,
-  },
-  commentSubmitButton: {
-    minHeight: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-    marginBottom: 12,
-    borderRadius: 10,
-    backgroundColor: '#0f766e',
-  },
   cardTitle: {
     fontSize: 18,
     fontWeight: '800',
@@ -2180,12 +1800,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#77727F',
     lineHeight: 21,
-  },
-  itemImage: {
-    width: '100%',
-    height: 180,
-    borderRadius: 8,
-    marginBottom: 14,
   },
   detailBackButton: {
     alignSelf: 'flex-start',
@@ -2385,16 +1999,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 4,
   },
-  topBar: {
-    minHeight: 56,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E8E4EC',
-    backgroundColor: '#FFFFFF',
-  },
   floatingActions: {
     position: 'absolute',
     right: 18,
@@ -2486,27 +2090,6 @@ const styles = StyleSheet.create({
   },
   bottomNavTextActive: {
     color: '#6336C8',
-  },
-  profileNavButton: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 6,
-  },
-  profileNavText: {
-    maxWidth: 72,
-  },
-  navProfileButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 0,
-    marginBottom: 0,
-    backgroundColor: '#E8E2F1',
-  },
-  navAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
   },
   eyebrow: {
     color: '#7656B5',
@@ -2811,10 +2394,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     marginBottom: 14,
-  },
-  settingsRow: {
-    gap: 4,
-    paddingVertical: 8,
   },
   settingsOption: {
     minHeight: 56,

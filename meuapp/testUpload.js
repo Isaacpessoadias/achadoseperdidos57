@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 // Using native fetch (Node >=18) which provides FormData and Blob.
 
-const CLOUD_NAME = 'com07vbi';
+const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
 
 // Determine MIME type from file extension
