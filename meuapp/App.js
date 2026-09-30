@@ -282,10 +282,16 @@ export default function App() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState('lost');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [profileReturnView, setProfileReturnView] = useState('lost');
   const [myItemFilter, setMyItemFilter] = useState('all');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
+  const [editingProfileField, setEditingProfileField] = useState('');
+  const [profileNameDraft, setProfileNameDraft] = useState('');
+  const [profileEmailDraft, setProfileEmailDraft] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isEditingAccount, setIsEditingAccount] = useState(false);
   const [profileSection, setProfileSection] = useState('account');
   const [commentedItems, setCommentedItems] = useState([]);
@@ -313,8 +319,16 @@ export default function App() {
   const [itemImageFile, setItemImageFile] = useState(null);
   const [itemType, setItemType] = useState('found');
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
   const scrollViewRef = useRef(null);
   const isItemListView = activeView === 'lost' || activeView === 'found';
+  const activeNavigationView = ['profile', 'settings', 'myItems'].includes(activeView)
+    ? 'profile'
+    : activeView === 'addItem'
+      ? itemType
+      : activeView === 'itemDetail'
+        ? selectedItem?.type || 'found'
+        : activeView;
 
   useEffect(() => {
     if (activeView !== 'itemDetail' || !selectedItem?.id) {
@@ -367,6 +381,7 @@ export default function App() {
   useEffect(() => {
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     setShowScrollTop(false);
+    setShowAddMenu(false);
   }, [activeView]);
 
   useEffect(() => {
@@ -478,8 +493,12 @@ export default function App() {
   }, [activeView, profileSection, user, foundItems]);
 
   const clearForm = () => {
+    setFullName('');
+    setEmail('');
+    setPassword('');
+  };
 
-      const startEditingProfileField = (field) => {
+  const startEditingProfileField = (field) => {
         setEditingProfileField(field);
         setProfileNameDraft(profileName || user?.displayName || '');
         setProfileEmailDraft(user?.email || '');
@@ -549,11 +568,6 @@ export default function App() {
           setIsSavingProfile(false);
         }
       };
-    setFullName('');
-    setEmail('');
-    setPassword('');
-  };
-
   const openProfile = () => {
     setProfileReturnView(activeView === 'found' ? 'found' : 'lost');
     setActiveView('profile');
@@ -837,15 +851,6 @@ export default function App() {
     }
   };
 
-  const renderItemList = (type, ownItemsOnly = false) => {
-    const filteredItems = foundItems.filter((item) => {
-      const matchesType = type === 'all' || (item.type || 'found') === type;
-      const matchesOwner = !ownItemsOnly || item.userId === user?.uid;
-      const matchesCategory = selectedCategory === 'Todas' || item.category === selectedCategory;
-      const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
-      return matchesType && matchesOwner && matchesCategory
-        && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
-    });
   const handleUpdateAccount = async () => {
     const normalizedName = editProfileName.trim();
     const passwordChanged = newPassword.length > 0;
@@ -905,8 +910,15 @@ export default function App() {
     }
   };
 
-  const renderItemList = (type) => {
-    const filteredItems = foundItems.filter((item) => (item.type || 'found') === type);
+  const renderItemList = (type, ownItemsOnly = false) => {
+    const filteredItems = foundItems.filter((item) => {
+      const matchesType = type === 'all' || (item.type || 'found') === type;
+      const matchesOwner = !ownItemsOnly || item.userId === user?.uid;
+      const matchesCategory = selectedCategory === 'Todas' || item.category === selectedCategory;
+      const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
+      return matchesType && matchesOwner && matchesCategory
+        && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
+    });
 
     if (!filteredItems.length) {
       return (
@@ -929,7 +941,18 @@ export default function App() {
         {filteredItems.map((item) => {
           const itemIsLost = (item.type || 'found') === 'lost';
           return (
-            <View style={styles.itemCard} key={item.id}>
+            <TouchableOpacity
+              style={styles.itemCard}
+              key={item.id}
+              onPress={() => {
+                setSelectedItem(item);
+                setItemComments([]);
+                setCommentText('');
+                setActiveView('itemDetail');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Ver detalhes de ${item.name}`}
+            >
               {item.imageUrl
                 ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
                 : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
@@ -943,7 +966,7 @@ export default function App() {
                 <Text style={styles.cardText} numberOfLines={2}>{item.description}</Text>
                 <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
               </View>
-            </View>
+            </TouchableOpacity>
           );
         })}
       </View>
@@ -978,22 +1001,50 @@ export default function App() {
         <SafeAreaView style={styles.safeArea}>
           <StatusBar style="dark" />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-            <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+            <View style={styles.appShell}>
+              <View style={styles.topBar}>
+                <View style={styles.tabRow}>
+                  <TouchableOpacity
+                    style={[styles.tabButton, activeNavigationView === 'lost' && styles.tabButtonActive]}
+                    onPress={() => { setSelectedCategory('Todas'); setActiveView('lost'); }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: activeNavigationView === 'lost' }}
+                  >
+                    <Text style={[styles.tabText, activeNavigationView === 'lost' && styles.tabTextActive]}>Perdidos</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.tabButton, activeNavigationView === 'found' && styles.tabButtonActive]}
+                    onPress={() => { setSelectedCategory('Todas'); setActiveView('found'); }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: activeNavigationView === 'found' }}
+                  >
+                    <Text style={[styles.tabText, activeNavigationView === 'found' && styles.tabTextActive]}>Achados</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.tabButton, activeNavigationView === 'profile' && styles.tabButtonActive]}
+                    onPress={openProfile}
+                    accessibilityRole="button"
+                    accessibilityLabel="Perfil"
+                    accessibilityState={{ selected: activeNavigationView === 'profile' }}
+                  >
+                    <Image
+                      source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
+                      style={styles.profileAvatar}
+                      resizeMode="cover"
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.screenScroll}
+                contentContainerStyle={[styles.container, (isItemListView || activeView === 'itemDetail') && styles.containerWithFloatingActions]}
+                keyboardShouldPersistTaps="handled"
+                onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
+                scrollEventThrottle={16}
+              >
             {(activeView === 'lost' || activeView === 'found') && (
               <>
-                <View style={styles.topBar}>
-                  <View style={styles.tabRow}>
-              <TouchableOpacity style={[styles.tabButton, activeView === 'found' && styles.tabButtonActive]} onPress={() => { setSelectedCategory('Todas'); setActiveView('found'); }}>
-                <Text style={[styles.tabText, activeView === 'found' && styles.tabTextActive]}>Achados</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tabButton, activeView === 'lost' && styles.tabButtonActive]} onPress={() => { setSelectedCategory('Todas'); setActiveView('lost'); }}>
-                <Text style={[styles.tabText, activeView === 'lost' && styles.tabTextActive]}>Perdidos</Text>
-              </TouchableOpacity>
-                  </View>
-              <TouchableOpacity onPress={openProfile} style={[styles.profileImageButton, styles.navProfileButton]}>
-                <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={[styles.profileImageHome, styles.navAvatar]} resizeMode="cover" />
-              </TouchableOpacity>
-            </View>
                 <Text style={styles.eyebrow}>ACHADOS & PERDIDOS</Text>
                 <Text style={styles.title}>{activeView === 'lost' ? 'Itens perdidos' : 'Itens achados'}</Text>
                 <View style={styles.searchBox}>
@@ -1024,32 +1075,6 @@ export default function App() {
 
             {activeView === 'lost' && (
               <View>
-                <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionHeadingTitle}>Perdidos recentemente</Text>
-                  <Text style={styles.resultCount}>{foundItems.filter((item) => item.type === 'lost').length} itens</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.buttonPrimary}
-                  onPress={() => {
-                    setItemType('lost');
-                    setActiveView('addItem');
-                  }}
-                  disabled={isUploading}
-                >
-                  <Text style={styles.buttonText}>+  Publicar item perdido</Text>
-                </TouchableOpacity>
-            <View style={styles.appShell}>
-              <ScrollView
-                ref={scrollViewRef}
-                style={styles.screenScroll}
-                contentContainerStyle={[styles.container, (isItemListView || activeView === 'itemDetail') && styles.containerWithFloatingActions]}
-                keyboardShouldPersistTaps="handled"
-                onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
-                scrollEventThrottle={16}
-              >
-
-            {activeView === 'lost' && (
-              <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
                 {renderItemList('lost')}
               </View>
@@ -1074,7 +1099,6 @@ export default function App() {
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
-                  <Text style={styles.buttonText}>+  Publicar item achado</Text>
                   <Text style={styles.detailBackText}>‹  Voltar aos itens</Text>
                 </TouchableOpacity>
                 {selectedItem.imageUrl ? (
@@ -1153,6 +1177,7 @@ export default function App() {
                 <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
                   <Text style={styles.changeImageText}>Alterar foto do perfil</Text>
                 </TouchableOpacity>
+                </View>
                 </View>
                 <TouchableOpacity style={styles.profileAction} onPress={() => { setSelectedCategory('Todas'); setSearchQuery(''); setActiveView('myItems'); }}>
                   <View><Text style={styles.profileActionTitle}>Meus itens</Text><Text style={styles.profileActionSubtitle}>Acompanhe o que você publicou</Text></View>
@@ -1251,126 +1276,9 @@ export default function App() {
                 <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
                   <Text style={styles.buttonDeleteText}>Excluir conta</Text>
                 </TouchableOpacity>
-                <Text style={styles.changeImageText}>Toque na imagem para trocar</Text>
-                <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
-                <View style={styles.profileSectionTabs}>
-                  <TouchableOpacity
-                    style={[styles.profileSectionTab, profileSection === 'account' && styles.profileSectionTabActive]}
-                    onPress={() => setProfileSection('account')}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: profileSection === 'account' }}
-                  >
-                    <Text style={[styles.profileSectionTabText, profileSection === 'account' && styles.profileSectionTabTextActive]}>
-                      Informações da conta
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.profileSectionTab, profileSection === 'commented' && styles.profileSectionTabActive]}
-                    onPress={() => setProfileSection('commented')}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: profileSection === 'commented' }}
-                  >
-                    <Text style={[styles.profileSectionTabText, profileSection === 'commented' && styles.profileSectionTabTextActive]}>
-                      Itens comentados
-                    </Text>
-                  </TouchableOpacity>
-                </View>
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
-                {profileSection === 'account' ? (
-                  <>
-                    <TouchableOpacity
-                      style={styles.editAccountButton}
-                      onPress={() => {
-                        setEditProfileName(profileName || user.displayName || '');
-                        setCurrentPassword('');
-                        setNewPassword('');
-                        setIsEditingAccount((editing) => !editing);
-                      }}
-                    >
-                      <Text style={styles.editAccountButtonText}>{isEditingAccount ? 'Cancelar edição' : 'Alterar informações da conta'}</Text>
-                    </TouchableOpacity>
-                    {isEditingAccount && (
-                  <View style={styles.accountEditForm}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Nome"
-                      value={editProfileName}
-                      onChangeText={setEditProfileName}
-                      autoCapitalize="words"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Nova senha (opcional)"
-                      value={newPassword}
-                      onChangeText={setNewPassword}
-                      secureTextEntry
-                    />
-                    {newPassword.length > 0 && (
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Senha atual"
-                        value={currentPassword}
-                        onChangeText={setCurrentPassword}
-                        secureTextEntry
-                      />
-                    )}
-                    <TouchableOpacity
-                      style={[styles.buttonPrimary, isSavingAccount && styles.buttonDisabled]}
-                      onPress={handleUpdateAccount}
-                      disabled={isSavingAccount}
-                    >
-                      {isSavingAccount ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alterações</Text>}
-                    </TouchableOpacity>
-                  </View>
-                    )}
-                  </>
-                ) : (
-                  <View style={styles.commentedItemsSection}>
-                    <Text style={styles.commentedItemsTitle}>Itens em que você comentou</Text>
-                    {isLoadingCommentedItems ? <ActivityIndicator color="#0f766e" /> : null}
-                    {commentedItemsError ? <Text style={styles.errorText}>{commentedItemsError}</Text> : null}
-                    {!isLoadingCommentedItems && !commentedItemsError && !commentedItems.length ? (
-                      <Text style={styles.emptyComments}>Os itens que você comentar aparecerão aqui.</Text>
-                    ) : null}
-                    {commentedItems.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={styles.commentedItemRow}
-                        onPress={() => {
-                          setSelectedItem(item);
-                          setItemComments([]);
-                          setCommentText('');
-                          setActiveView('itemDetail');
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Abrir detalhes de ${item.name}`}
-                      >
-                        {item.imageUrl ? (
-                          <Image source={{ uri: item.imageUrl }} style={styles.commentedItemImage} resizeMode="cover" />
-                        ) : (
-                          <View style={styles.commentedItemImagePlaceholder} />
-                        )}
-                        <View style={styles.commentedItemInfo}>
-                          <Text style={styles.commentedItemName} numberOfLines={2}>{item.name}</Text>
-                          <Text style={styles.commentedItemMeta} numberOfLines={1}>
-                            {item.type === 'lost' ? 'Perdido' : 'Achado'} · {item.location}
-                          </Text>
-                        </View>
-                        <Text style={styles.commentedItemArrow}>›</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-                <View style={styles.accountActions}>
-                  <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
-                    <Text style={styles.buttonText}>Sair</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
-                    <Text style={styles.buttonText}>Excluir conta</Text>
-                  </TouchableOpacity>
-                </View>
                 {confirmDelete && (
                   <View style={styles.confirmBox}>
                     <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
@@ -1473,23 +1381,49 @@ export default function App() {
                   <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
                     <Text style={styles.buttonText}>Excluir</Text>
                   </TouchableOpacity>
+                </View>
+              </View>
+            )}
               </ScrollView>
               {(isItemListView || showScrollTop) && (
                 <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
                   {isItemListView && (
-                    <TouchableOpacity
-                      style={styles.floatingAddButton}
-                      onPress={() => {
-                        setItemType(activeView);
-                        setActiveView('addItem');
-                      }}
-                      disabled={isUploading}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.floatingAddButtonText}>
-                        {activeView === 'lost' ? 'Cadastrar item perdido' : 'Cadastrar item achado'}
-                      </Text>
-                    </TouchableOpacity>
+                    <View style={styles.addMenuContainer}>
+                      {showAddMenu && (
+                        <View style={styles.addMenu}>
+                          <TouchableOpacity
+                            style={styles.addMenuOption}
+                            onPress={() => {
+                              setItemType('found');
+                              setActiveView('addItem');
+                            }}
+                            accessibilityRole="button"
+                          >
+                            <Text style={styles.addMenuOptionText}>Cadastrar achado</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.addMenuOption}
+                            onPress={() => {
+                              setItemType('lost');
+                              setActiveView('addItem');
+                            }}
+                            accessibilityRole="button"
+                          >
+                            <Text style={styles.addMenuOptionText}>Cadastrar perdido</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                      <TouchableOpacity
+                        style={styles.floatingAddButton}
+                        onPress={() => setShowAddMenu((showing) => !showing)}
+                        disabled={isUploading}
+                        accessibilityRole="button"
+                        accessibilityLabel={showAddMenu ? 'Fechar opções de cadastro' : 'Cadastrar item'}
+                        accessibilityState={{ expanded: showAddMenu }}
+                      >
+                        <Text style={styles.floatingAddButtonText}>{showAddMenu ? '×' : '+'}</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
                   {showScrollTop && (
                     <TouchableOpacity
@@ -1503,29 +1437,6 @@ export default function App() {
                   )}
                 </View>
               )}
-              <View style={styles.bottomBar}>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeView === 'lost' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('lost')}
-                >
-                  <Text style={[styles.bottomNavText, activeView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeView === 'found' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('found')}
-                >
-                  <Text style={[styles.bottomNavText, activeView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, styles.profileNavButton, activeView === 'profile' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('profile')}
-                >
-                  <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileAvatar} resizeMode="cover" />
-                  <Text style={[styles.bottomNavText, styles.profileNavText, activeView === 'profile' && styles.bottomNavTextActive]} numberOfLines={1}>
-                    {profileName || user.displayName || 'Perfil'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
             </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
@@ -1550,37 +1461,6 @@ export default function App() {
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.authModeButton, screen === 'register' && styles.authModeButtonActive]} onPress={() => setScreen('register')}>
                   <Text style={[styles.authModeText, screen === 'register' && styles.authModeTextActive]}>Criar conta</Text>
-          <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-            <Text style={styles.title}>Achados e Perdidos</Text>
-
-            <View style={styles.tabRow}>
-              <TouchableOpacity style={[styles.tabButton, screen === 'login' && styles.tabButtonActive]} onPress={() => setScreen('login')}>
-                <Text style={[styles.tabText, screen === 'login' && styles.tabTextActive]}>Entrar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tabButton, screen === 'register' && styles.tabButtonActive]} onPress={() => setScreen('register')}>
-                <Text style={[styles.tabText, screen === 'register' && styles.tabTextActive]}>Cadastrar</Text>
-              </TouchableOpacity>
-            </View>
-
-            {screen === 'login' ? (
-              <View style={styles.formBox}>
-                <Text style={styles.sectionTitle}>Login</Text>
-                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
-                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
-                <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
-                  <Text style={styles.buttonText}>Entrar</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.formBox}>
-                <Text style={styles.sectionTitle}>Cadastro</Text>
-                <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
-                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
-                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
-                <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
-                  <Text style={styles.buttonText}>Cadastrar</Text>
                 </TouchableOpacity>
               </View>
 
@@ -1619,6 +1499,13 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  appShell: {
+    flex: 1,
+    backgroundColor: '#F7F6FA',
+  },
+  screenScroll: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#F7F6FA',
@@ -1629,6 +1516,9 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 28,
     backgroundColor: '#F7F6FA',
+  },
+  containerWithFloatingActions: {
+    paddingBottom: 104,
   },
   authContainer: {
     flexGrow: 1,
@@ -1717,6 +1607,12 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
   },
+  profileAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E8E2F1',
+  },
   changeImageText: {
     color: '#6336C8',
     fontSize: 13,
@@ -1733,25 +1629,24 @@ const styles = StyleSheet.create({
   tabRow: {
     flexDirection: 'row',
     flex: 1,
-    backgroundColor: '#EAE7EF',
-    borderRadius: 15,
-    padding: 4,
+    gap: 8,
+    backgroundColor: 'transparent',
     marginBottom: 0,
   },
   tabButton: {
     flex: 1,
-    minHeight: 44,
-    paddingVertical: 11,
-    borderRadius: 12,
+    minHeight: 40,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   tabButtonActive: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#6336C8',
   },
   tabText: {
     color: '#77727F',
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     textAlign: 'center',
   },
   tabTextActive: {
@@ -2397,10 +2292,113 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   topBar: {
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8E4EC',
+    backgroundColor: '#FFFFFF',
+  },
+  floatingActions: {
+    position: 'absolute',
+    right: 18,
+    bottom: 16,
+    alignItems: 'flex-end',
+    gap: 10,
+    zIndex: 1,
+  },
+  floatingActionsEnd: {
+    bottom: 12,
+  },
+  floatingAddButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    backgroundColor: '#6336C8',
+  },
+  floatingAddButtonText: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '500',
+    lineHeight: 32,
+  },
+  addMenuContainer: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  addMenu: {
+    minWidth: 176,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#E8E4EC',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    elevation: 4,
+  },
+  addMenuOption: {
+    minHeight: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  addMenuOptionText: {
+    color: '#24212B',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  scrollTopButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    elevation: 3,
+  },
+  scrollTopText: {
+    color: '#24212B',
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  bottomBar: {
+    minHeight: 68,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E8E4EC',
+    backgroundColor: '#FFFFFF',
+  },
+  bottomNavButton: {
+    minWidth: 64,
+    minHeight: 54,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+  },
+  bottomNavButtonActive: {
+    backgroundColor: '#F0EBF8',
+  },
+  bottomNavText: {
+    color: '#77727F',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  bottomNavTextActive: {
+    color: '#6336C8',
+  },
+  profileNavButton: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 6,
+  },
+  profileNavText: {
+    maxWidth: 72,
   },
   navProfileButton: {
     width: 46,
