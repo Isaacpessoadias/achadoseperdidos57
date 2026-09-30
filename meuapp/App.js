@@ -67,9 +67,15 @@ const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
 const ITEM_CATEGORIES = [
-  { label: 'Eletrônicos', symbol: '📱' },
-  { label: 'Material escolar', symbol: '✏️' },
-  { label: 'Roupa', symbol: '👕' },
+  { label: 'Documento', symbol: '📄' },
+  { label: 'Eletrônicos (celular, notebook etc)', symbol: '📱' },
+  { label: 'Garrafa', symbol: '🧴' },
+  { label: 'Material Escolar', symbol: '✏️' },
+  { label: 'Óculos', symbol: '👓' },
+  { label: 'Guarda Chuva', symbol: '☂️' },
+  { label: 'Bolsa', symbol: '👜' },
+  { label: 'Roupas', symbol: '👕' },
+  { label: 'Calçados', symbol: '👟' },
   { label: 'Outros', symbol: '📦' },
 ];
 const ACCOUNT_DOMAIN_HINT = 'Use e-mail @ifpe.edu.br (servidor) ou @discente.ifpe.edu.br (aluno).';
@@ -80,23 +86,48 @@ const normalizeItemCategory = (category) => {
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase();
 
+  if (normalizedCategory.includes('documento')) {
+    return 'Documento';
+  }
+
   if (normalizedCategory.includes('eletron')) {
-    return 'Eletrônicos';
+    return 'Eletrônicos (celular, notebook etc)';
+  }
+
+  if (normalizedCategory.includes('garrafa')) {
+    return 'Garrafa';
   }
 
   if (normalizedCategory.includes('material escolar')) {
-    return 'Material escolar';
+    return 'Material Escolar';
   }
 
-  if (normalizedCategory.includes('roup') || normalizedCategory.includes('calcad') || normalizedCategory.includes('vestu')) {
-    return 'Roupa';
+  if (normalizedCategory.includes('ocul')) {
+    return 'Óculos';
+  }
+
+  if (normalizedCategory.includes('guarda chuva') || normalizedCategory.includes('guardachuva')) {
+    return 'Guarda Chuva';
+  }
+
+  if (normalizedCategory.includes('bolsa')) {
+    return 'Bolsa';
+  }
+
+  if (normalizedCategory.includes('roup') || normalizedCategory.includes('vestu')) {
+    return 'Roupas';
+  }
+
+  if (normalizedCategory.includes('calcad')) {
+    return 'Calçados';
   }
 
   return 'Outros';
 };
 
 const getCategoryOption = (category) => (
-  ITEM_CATEGORIES.find((option) => option.label === normalizeItemCategory(category)) || ITEM_CATEGORIES[3]
+  ITEM_CATEGORIES.find((option) => option.label === normalizeItemCategory(category))
+  || ITEM_CATEGORIES.find((option) => option.label === 'Outros')
 );
 
 const getAccountType = (emailAddress) => {
@@ -1067,8 +1098,14 @@ export default function App() {
                 {showCategoryFilters && (
                   <ScrollView
                     horizontal
-                    style={styles.categoryFilterScroll}
-                    showsHorizontalScrollIndicator={false}
+                    style={[
+                      styles.categoryFilterScroll,
+                      Platform.OS === 'web' && {
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#6336C8 #E8E4EC',
+                      },
+                    ]}
+                    showsHorizontalScrollIndicator
                     contentContainerStyle={styles.categoryRow}
                   >
                     {['Todas', ...ITEM_CATEGORIES.map((option) => option.label)].map((category) => {
@@ -2542,7 +2579,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   categoryFilterScroll: {
-    height: 48,
+    height: 58,
     flexGrow: 0,
     flexShrink: 0,
   },
