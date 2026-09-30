@@ -67,18 +67,37 @@ const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
 const ITEM_CATEGORIES = [
-  'Documento',
-  'Eletronicos (celular, notebook etc)',
-  'Garrafa',
-  'Material Escolar',
-  'Óculos',
-  'Guarda Chuva',
-  'Bolsa',
-  'Roupas',
-  'Calçados',
-  'Outros',
+  { label: 'Eletrônicos', symbol: '📱' },
+  { label: 'Material escolar', symbol: '✏️' },
+  { label: 'Roupa', symbol: '👕' },
+  { label: 'Outros', symbol: '📦' },
 ];
 const ACCOUNT_DOMAIN_HINT = 'Use e-mail @ifpe.edu.br (servidor) ou @discente.ifpe.edu.br (aluno).';
+
+const normalizeItemCategory = (category) => {
+  const normalizedCategory = (category || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase();
+
+  if (normalizedCategory.includes('eletron')) {
+    return 'Eletrônicos';
+  }
+
+  if (normalizedCategory.includes('material escolar')) {
+    return 'Material escolar';
+  }
+
+  if (normalizedCategory.includes('roup') || normalizedCategory.includes('calcad') || normalizedCategory.includes('vestu')) {
+    return 'Roupa';
+  }
+
+  return 'Outros';
+};
+
+const getCategoryOption = (category) => (
+  ITEM_CATEGORIES.find((option) => option.label === normalizeItemCategory(category)) || ITEM_CATEGORIES[3]
+);
 
 const getAccountType = (emailAddress) => {
   const normalizedEmail = (emailAddress || '').trim().toLowerCase();
@@ -284,7 +303,7 @@ export default function App() {
   const [activeView, setActiveView] = useState('lost');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
-  const [profileReturnView, setProfileReturnView] = useState('lost');
+  const [showCategoryFilters, setShowCategoryFilters] = useState(false);
   const [myItemFilter, setMyItemFilter] = useState('all');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
@@ -382,6 +401,7 @@ export default function App() {
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     setShowScrollTop(false);
     setShowAddMenu(false);
+    setShowCategoryFilters(false);
   }, [activeView]);
 
   useEffect(() => {
@@ -569,7 +589,6 @@ export default function App() {
         }
       };
   const openProfile = () => {
-    setProfileReturnView(activeView === 'found' ? 'found' : 'lost');
     setActiveView('profile');
   };
 
@@ -914,7 +933,8 @@ export default function App() {
     const filteredItems = foundItems.filter((item) => {
       const matchesType = type === 'all' || (item.type || 'found') === type;
       const matchesOwner = !ownItemsOnly || item.userId === user?.uid;
-      const matchesCategory = selectedCategory === 'Todas' || item.category === selectedCategory;
+      const matchesCategory = selectedCategory === 'Todas'
+        || normalizeItemCategory(item.category) === selectedCategory;
       const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
       return matchesType && matchesOwner && matchesCategory
         && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
@@ -951,7 +971,7 @@ export default function App() {
                 setActiveView('itemDetail');
               }}
               accessibilityRole="button"
-              accessibilityLabel={`Ver detalhes de ${item.name}`}
+              accessibilityLabel={`Ver detalhes de ${item.name}, categoria ${normalizeItemCategory(item.category)}`}
             >
               {item.imageUrl
                 ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
@@ -960,6 +980,11 @@ export default function App() {
                 <View style={[styles.itemTypeBadge, itemIsLost ? styles.itemTypeBadgeLost : styles.itemTypeBadgeFound]}>
                   <Text style={[styles.itemTypeBadgeText, itemIsLost ? styles.itemTypeBadgeTextLost : styles.itemTypeBadgeTextFound]}>
                     {itemIsLost ? 'Perdido' : 'Achado'}
+                  </Text>
+                </View>
+                <View style={styles.itemCategoryBadge}>
+                  <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
+                    {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
                   </Text>
                 </View>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
@@ -1002,39 +1027,6 @@ export default function App() {
           <StatusBar style="dark" />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
             <View style={styles.appShell}>
-              <View style={styles.topBar}>
-                <View style={styles.tabRow}>
-                  <TouchableOpacity
-                    style={[styles.tabButton, activeNavigationView === 'lost' && styles.tabButtonActive]}
-                    onPress={() => { setSelectedCategory('Todas'); setActiveView('lost'); }}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: activeNavigationView === 'lost' }}
-                  >
-                    <Text style={[styles.tabText, activeNavigationView === 'lost' && styles.tabTextActive]}>Perdidos</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.tabButton, activeNavigationView === 'found' && styles.tabButtonActive]}
-                    onPress={() => { setSelectedCategory('Todas'); setActiveView('found'); }}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: activeNavigationView === 'found' }}
-                  >
-                    <Text style={[styles.tabText, activeNavigationView === 'found' && styles.tabTextActive]}>Achados</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.tabButton, activeNavigationView === 'profile' && styles.tabButtonActive]}
-                    onPress={openProfile}
-                    accessibilityRole="button"
-                    accessibilityLabel="Perfil"
-                    accessibilityState={{ selected: activeNavigationView === 'profile' }}
-                  >
-                    <Image
-                      source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
-                      style={styles.profileAvatar}
-                      resizeMode="cover"
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
               <ScrollView
                 ref={scrollViewRef}
                 style={styles.screenScroll}
@@ -1058,18 +1050,43 @@ export default function App() {
                     returnKeyType="search"
                   />
                   {searchQuery ? <TouchableOpacity onPress={() => setSearchQuery('')}><Text style={styles.clearSearch}>×</Text></TouchableOpacity> : null}
+                  <TouchableOpacity
+                    style={[styles.categoryFilterButton, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterButtonActive]}
+                    onPress={() => setShowCategoryFilters((showing) => !showing)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Filtrar por categoria"
+                    accessibilityState={{ expanded: showCategoryFilters, selected: selectedCategory !== 'Todas' }}
+                  >
+                    <View style={styles.categoryFilterIcon}>
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkWide, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkMiddle, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkNarrow, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterMarkActive]} />
+                    </View>
+                  </TouchableOpacity>
                 </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
-                  {['Todas', ...new Set(foundItems.map((item) => item.category).filter(Boolean))].map((category) => (
-                    <TouchableOpacity
-                      key={category}
-                      style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]}
-                      onPress={() => setSelectedCategory(category)}
-                    >
-                      <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                {showCategoryFilters && (
+                  <ScrollView
+                    horizontal
+                    style={styles.categoryFilterScroll}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.categoryRow}
+                  >
+                    {['Todas', ...ITEM_CATEGORIES.map((option) => option.label)].map((category) => {
+                      const categoryOption = ITEM_CATEGORIES.find((option) => option.label === category);
+                      return (
+                        <TouchableOpacity
+                          key={category}
+                          style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]}
+                          onPress={() => setSelectedCategory(category)}
+                        >
+                          <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>
+                            {categoryOption ? `${categoryOption.symbol} ` : ''}{category}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                )}
               </>
             )}
 
@@ -1116,7 +1133,9 @@ export default function App() {
                   <Text style={styles.detailLabel}>Local</Text>
                   <Text style={styles.detailValue}>{selectedItem.location}</Text>
                   <Text style={styles.detailLabel}>Categoria</Text>
-                  <Text style={styles.detailValue}>{selectedItem.category}</Text>
+                  <Text style={styles.detailValue}>
+                    {getCategoryOption(selectedItem.category).symbol} {normalizeItemCategory(selectedItem.category)}
+                  </Text>
                 </View>
                 <View style={styles.commentsSection}>
                   <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
@@ -1158,13 +1177,10 @@ export default function App() {
 
             {activeView === 'profile' && (
               <View style={styles.profileScreen}>
-                <TouchableOpacity onPress={() => setActiveView(profileReturnView)} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Voltar para a lista">
-                  <Text style={styles.backButtonText}>‹</Text>
-                </TouchableOpacity>
-                <Text style={styles.title}>Meu perfil</Text>
+                <Text style={[styles.title, styles.profilePageTitle]}>Meu perfil</Text>
                 <View style={styles.profileHero}>
-              <View>
-                <Text style={styles.title}>
+              <View style={styles.profileIdentity}>
+                <Text style={styles.profileTypeTitle}>
                   {getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}
                 </Text>
                 <View style={styles.profileImageContainer}>
@@ -1298,6 +1314,14 @@ export default function App() {
 
             {activeView === 'addItem' && (
               <View>
+                  <TouchableOpacity
+                    style={styles.backButton}
+                    onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Voltar para os itens"
+                  >
+                    <Text style={styles.backButtonText}>‹</Text>
+                  </TouchableOpacity>
                   <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
@@ -1309,24 +1333,24 @@ export default function App() {
                     accessibilityLabel={itemCategory || 'Selecionar categoria do item'}
                   >
                     <Text style={[styles.categoryPickerText, !itemCategory && styles.categoryPlaceholder]}>
-                      {itemCategory || 'Selecionar categoria'}
+                      {itemCategory ? `${getCategoryOption(itemCategory).symbol} ${itemCategory}` : 'Selecionar categoria'}
                     </Text>
                   </TouchableOpacity>
                   {showCategoryOptions && (
                     <View style={styles.categoryOptions}>
                       {ITEM_CATEGORIES.map((category) => (
                         <TouchableOpacity
-                          key={category}
-                          style={[styles.categoryOption, itemCategory === category && styles.categoryOptionSelected]}
+                          key={category.label}
+                          style={[styles.categoryOption, itemCategory === category.label && styles.categoryOptionSelected]}
                           onPress={() => {
-                            setItemCategory(category);
+                            setItemCategory(category.label);
                             setShowCategoryOptions(false);
                           }}
                           accessibilityRole="button"
-                          accessibilityState={{ selected: itemCategory === category }}
+                          accessibilityState={{ selected: itemCategory === category.label }}
                         >
-                          <Text style={[styles.categoryOptionText, itemCategory === category && styles.categoryOptionTextSelected]}>
-                            {category}
+                          <Text style={[styles.categoryOptionText, itemCategory === category.label && styles.categoryOptionTextSelected]}>
+                            {category.symbol} {category.label}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -1437,6 +1461,37 @@ export default function App() {
                   )}
                 </View>
               )}
+              <View style={styles.bottomBar}>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'lost' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); setActiveView('lost'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'lost' }}
+                >
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'found' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); setActiveView('found'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'found' }}
+                >
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
+                  onPress={openProfile}
+                  accessibilityRole="button"
+                  accessibilityLabel="Perfil"
+                  accessibilityState={{ selected: activeNavigationView === 'profile' }}
+                >
+                  <Image
+                    source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
+                    style={styles.profileAvatar}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+              </View>
             </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
@@ -2304,13 +2359,13 @@ const styles = StyleSheet.create({
   floatingActions: {
     position: 'absolute',
     right: 18,
-    bottom: 16,
+    bottom: 82,
     alignItems: 'flex-end',
     gap: 10,
     zIndex: 1,
   },
   floatingActionsEnd: {
-    bottom: 12,
+    bottom: 82,
   },
   floatingAddButton: {
     width: 44,
@@ -2365,13 +2420,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   bottomBar: {
-    minHeight: 68,
+    minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     borderTopWidth: 1,
     borderTopColor: '#E8E4EC',
     backgroundColor: '#FFFFFF',
+    zIndex: 2,
   },
   bottomNavButton: {
     minWidth: 64,
@@ -2431,6 +2487,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 14,
   },
+  categoryFilterButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+    borderRadius: 9,
+  },
+  categoryFilterButtonActive: {
+    backgroundColor: '#F0EBF8',
+  },
+  categoryFilterIcon: {
+    alignItems: 'center',
+    gap: 3,
+  },
+  categoryFilterMark: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#77727F',
+  },
+  categoryFilterMarkWide: {
+    width: 16,
+  },
+  categoryFilterMarkMiddle: {
+    width: 11,
+  },
+  categoryFilterMarkNarrow: {
+    width: 6,
+  },
+  categoryFilterMarkActive: {
+    backgroundColor: '#6336C8',
+  },
   searchMark: {
     color: '#77727F',
     fontSize: 25,
@@ -2448,11 +2536,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   categoryRow: {
+    height: 48,
+    flexGrow: 0,
+    alignItems: 'center',
     gap: 8,
-    paddingBottom: 18,
+  },
+  categoryFilterScroll: {
+    height: 48,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   categoryChip: {
+    height: 36,
     minHeight: 36,
+    flexShrink: 0,
     paddingHorizontal: 15,
     borderRadius: 18,
     alignItems: 'center',
@@ -2541,6 +2638,20 @@ const styles = StyleSheet.create({
   itemTypeBadgeTextFound: {
     color: '#26734D',
   },
+  itemCategoryBadge: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    marginBottom: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#F0EBF8',
+  },
+  itemCategoryBadgeText: {
+    color: '#6336C8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
   itemLocation: {
     color: '#7656B5',
     fontSize: 11,
@@ -2562,17 +2673,39 @@ const styles = StyleSheet.create({
   },
   profileScreen: {
     flex: 1,
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    alignItems: 'center',
   },
   profileHero: {
+    width: '100%',
     alignItems: 'center',
     paddingTop: 20,
     paddingBottom: 28,
   },
+  profilePageTitle: {
+    width: '100%',
+    marginBottom: 0,
+    textAlign: 'center',
+  },
+  profileIdentity: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  profileTypeTitle: {
+    marginBottom: 16,
+    color: '#24212B',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   profileEmail: {
     color: '#77727F',
     fontSize: 14,
-    marginTop: -14,
+    marginTop: 0,
     marginBottom: 10,
+    textAlign: 'center',
   },
   myItemsFilterRow: {
     flexDirection: 'row',
@@ -2600,6 +2733,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   profileAction: {
+    width: '100%',
     minHeight: 82,
     flexDirection: 'row',
     alignItems: 'center',
