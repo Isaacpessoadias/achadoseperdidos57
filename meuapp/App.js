@@ -1561,6 +1561,7 @@ export default function App() {
                   <Text style={styles.sectionTitle}>Boas-vindas</Text>
                   <Text style={styles.authFormIntro}>Entre na sua conta para continuar.</Text>
                   <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                   <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
                   <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
                     <Text style={styles.buttonText}>Entrar</Text>
@@ -1572,6 +1573,7 @@ export default function App() {
                   <Text style={styles.authFormIntro}>Leva só um instante para começar.</Text>
                   <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
                   <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                   <TextInput style={styles.input} placeholder="Senha (mínimo 6 caracteres)" value={password} onChangeText={setPassword} secureTextEntry />
                   <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
                     <Text style={styles.buttonText}>Criar conta</Text>
