@@ -1058,38 +1058,9 @@ export default function App() {
     }
   };
 
-  const filteredItemsByType = useMemo(() => {
+  const filteredItems = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
-
-    return {
-      lost: foundItems.filter((item) => {
-        const matchesType = (item.type || 'found') === 'lost';
-        const matchesCategory = selectedCategory === 'Todas'
-          || normalizeItemCategory(item.category) === selectedCategory;
-        const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
-        return matchesType && matchesCategory && searchableText.includes(normalizedQuery);
-      }),
-      found: foundItems.filter((item) => {
-        const matchesType = (item.type || 'found') === 'found';
-        const matchesCategory = selectedCategory === 'Todas'
-          || normalizeItemCategory(item.category) === selectedCategory;
-        const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
-        return matchesType && matchesCategory && searchableText.includes(normalizedQuery);
-      }),
-    };
-  }, [foundItems, searchQuery, selectedCategory]);
-
-  const myItemsOnly = useMemo(
-    () => foundItems.filter((item) => item.userId === user?.uid),
-    [foundItems, user?.uid],
-  );
-
-  const renderItemList = useCallback((items, type, ownItemsOnly = false) => {
-    if (!items.length) {
-  const renderItemList = (type, ownItemsOnly = false) => {
-    const filteredItems = foundItems.filter((item) => {
-      const matchesType = type === 'all' || (item.type || 'found') === type;
-      const matchesOwner = !ownItemsOnly || item.userId === user?.uid;
+    return foundItems.filter((item) => {
       const matchesCategory = selectedCategory === 'Todas'
         || normalizeItemCategory(item.category) === selectedCategory;
       const itemDateStart = item.eventDateStart;
@@ -1101,11 +1072,22 @@ export default function App() {
             && itemDateStart <= (filterDateEnd || '9999-12-31')
       ));
       const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
-      return matchesType && matchesOwner && matchesCategory && matchesDate
-        && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
+      return matchesCategory && matchesDate && searchableText.includes(normalizedQuery);
     });
+  }, [foundItems, searchQuery, selectedCategory, hasDateFilter, filterDateMode, filterDateStart, filterDateEnd]);
 
-    if (!filteredItems.length) {
+  const filteredItemsByType = useMemo(() => ({
+    lost: filteredItems.filter((item) => (item.type || 'found') === 'lost'),
+    found: filteredItems.filter((item) => (item.type || 'found') === 'found'),
+  }), [filteredItems]);
+
+  const myItemsOnly = useMemo(
+    () => filteredItems.filter((item) => item.userId === user?.uid),
+    [filteredItems, user?.uid],
+  );
+
+  const renderItemList = useCallback((items, type, ownItemsOnly = false) => {
+    if (!items.length) {
       return (
         <View style={styles.emptyState}>
           <Text style={styles.emptyStateMark}>◎</Text>
@@ -1167,7 +1149,7 @@ export default function App() {
         })}
       </View>
     );
-  }, [navigateTo, searchQuery, selectedCategory]);
+  }, [navigateTo, searchQuery, selectedCategory, hasDateFilter]);
 
   if (user) {
     return (
