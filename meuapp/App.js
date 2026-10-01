@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -126,6 +127,34 @@ const getCategoryOption = (category) => (
   ITEM_CATEGORIES.find((option) => option.label === normalizeItemCategory(category))
   || ITEM_CATEGORIES.find((option) => option.label === 'Outros')
 );
+
+const parseDateInput = (value) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (date.getFullYear() !== Number(year)
+    || date.getMonth() !== Number(month) - 1
+    || date.getDate() !== Number(day)) {
+    return null;
+  }
+
+  return value;
+};
+
+const formatStoredDate = (value) => (value ? value.split('-').reverse().join('/') : 'Não informada');
+const toStoredDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const fromStoredDate = (value) => {
+  if (!value) {
+    return new Date();
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
 
 const getAccountType = (emailAddress) => {
   const normalizedEmail = (emailAddress || '').trim().toLowerCase();
@@ -353,6 +382,10 @@ export default function App() {
   const [itemName, setItemName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [itemLocation, setItemLocation] = useState('');
+  const [itemDateStart, setItemDateStart] = useState('');
+  const [itemDateEnd, setItemDateEnd] = useState('');
+  const [itemDateMode, setItemDateMode] = useState('single');
+  const [datePickerField, setDatePickerField] = useState(null);
   const [itemCategory, setItemCategory] = useState('');
   const [showCategoryOptions, setShowCategoryOptions] = useState(false);
   const [itemImage, setItemImage] = useState(null);
@@ -730,9 +763,97 @@ export default function App() {
     }
   };
 
+  const updateItemDate = (field, date) => {
+    const value = toStoredDate(date);
+    if (field === 'start') {
+      setItemDateStart(value);
+      if (itemDateEnd && value > itemDateEnd) {
+        setItemDateEnd('');
+      }
+      return;
+    }
+
+    setItemDateEnd(value);
+  };
+
+  const openItemDatePicker = (field) => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: fromStoredDate(field === 'start' ? itemDateStart : itemDateEnd),
+        mode: 'date',
+        minimumDate: field === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined,
+        maximumDate: field === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined,
+        onValueChange: (_event, date) => {
+          if (date) {
+            updateItemDate(field, date);
+          }
+        },
+      });
+      return;
+    }
+
+    setDatePickerField(field);
+  };
+
+  const renderDateField = (field, placeholder) => {
+    const value = field === 'start' ? itemDateStart : itemDateEnd;
+    const dateConstraints = {
+      min: field === 'end' ? itemDateStart || undefined : undefined,
+      max: field === 'start' ? itemDateEnd || undefined : undefined,
+    };
+
+    if (Platform.OS === 'web') {
+      return React.createElement('input', {
+        type: 'date',
+        value,
+        ...dateConstraints,
+        'aria-label': placeholder,
+        onChange: (event) => updateItemDate(field, fromStoredDate(event.target.value)),
+        style: {
+          boxSizing: 'border-box',
+          width: '100%',
+          height: '50px',
+          marginBottom: '14px',
+          padding: '13px 14px',
+          border: '1px solid #E5E1EA',
+          borderRadius: '12px',
+          backgroundColor: '#FFFFFF',
+          color: '#24212B',
+          fontSize: '16px',
+        },
+      });
+    }
+
+    return (
+      <TouchableOpacity
+        style={styles.input}
+        onPress={() => openItemDatePicker(field)}
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${placeholder}: ${formatStoredDate(value)}` : placeholder}
+      >
+        <Text style={[styles.dateInputText, !value && styles.dateInputPlaceholder]}>
+          {value ? formatStoredDate(value) : placeholder}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const handleAddItem = async () => {
     if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
       setStatus({ type: 'error', text: 'Preencha todos os campos.' });
+      return;
+    }
+
+    const eventDateStart = parseDateInput(itemDateStart);
+    const eventDateEnd = itemDateMode === 'period' && itemDateEnd.trim()
+      ? parseDateInput(itemDateEnd)
+      : null;
+    if (!eventDateStart || (itemDateMode === 'period' && (!itemDateEnd.trim() || !eventDateEnd))) {
+      setStatus({ type: 'error', text: 'Selecione datas válidas.' });
+      return;
+    }
+    if (eventDateEnd && eventDateEnd < eventDateStart) {
+      setStatus({ type: 'error', text: 'A data final não pode ser anterior à data inicial.' });
       return;
     }
 
@@ -759,6 +880,8 @@ export default function App() {
         imageUrl: safeImageUrl,
         createdAt: new Date().toISOString(),
         foundAt: new Date().toISOString(),
+        eventDateStart,
+        eventDateEnd,
         userId: user ? user.uid : null,
       };
 
@@ -770,6 +893,10 @@ export default function App() {
       setItemName('');
       setItemDescription('');
       setItemLocation('');
+      setItemDateStart('');
+      setItemDateEnd('');
+      setItemDateMode('single');
+      setDatePickerField(null);
       setItemCategory('');
       setShowCategoryOptions(false);
       setItemImage(null);
@@ -1036,6 +1163,13 @@ export default function App() {
                   <Text style={styles.detailValue}>
                     {getCategoryOption(selectedItem.category).symbol} {normalizeItemCategory(selectedItem.category)}
                   </Text>
+                  <Text style={styles.detailLabel}>
+                    {selectedItem.type === 'lost' ? 'Data da perda' : 'Data do achado'}
+                  </Text>
+                  <Text style={styles.detailValue}>
+                    {formatStoredDate(selectedItem.eventDateStart)}
+                    {selectedItem.eventDateEnd ? ` até ${formatStoredDate(selectedItem.eventDateEnd)}` : ''}
+                  </Text>
                 </View>
                 <View style={styles.commentsSection}>
                   <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
@@ -1226,6 +1360,50 @@ export default function App() {
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
                   <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
+                  <View style={styles.authModeRow} accessibilityRole="radiogroup">
+                    {[
+                      { key: 'single', label: 'Uma data' },
+                      { key: 'period', label: 'Período' },
+                    ].map((mode) => (
+                      <TouchableOpacity
+                        key={mode.key}
+                        style={[styles.authModeButton, itemDateMode === mode.key && styles.authModeButtonActive]}
+                        onPress={() => {
+                          setItemDateMode(mode.key);
+                          setDatePickerField(null);
+                          if (mode.key === 'single') {
+                            setItemDateEnd('');
+                          }
+                        }}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: itemDateMode === mode.key }}
+                      >
+                        <Text style={[styles.authModeText, itemDateMode === mode.key && styles.authModeTextActive]}>
+                          {mode.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {renderDateField('start', itemDateMode === 'period'
+                    ? 'Data inicial'
+                    : itemType === 'lost' ? 'Data em que perdeu' : 'Data em que encontrou')}
+                  {itemDateMode === 'period' && renderDateField('end', 'Data final')}
+                  {Platform.OS === 'ios' && datePickerField ? (
+                    <View style={styles.datePickerPanel}>
+                      <DateTimePicker
+                        value={fromStoredDate(datePickerField === 'start' ? itemDateStart : itemDateEnd)}
+                        mode="date"
+                        display="spinner"
+                        locale="pt-BR"
+                        minimumDate={datePickerField === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined}
+                        maximumDate={datePickerField === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined}
+                        onValueChange={(_event, date) => date && updateItemDate(datePickerField, date)}
+                      />
+                      <TouchableOpacity style={styles.datePickerDone} onPress={() => setDatePickerField(null)}>
+                        <Text style={styles.datePickerDoneText}>Concluir</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                   <TouchableOpacity
                     style={styles.categoryPicker}
                     onPress={() => setShowCategoryOptions((showing) => !showing)}
@@ -1288,7 +1466,10 @@ export default function App() {
                     <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                   ) : null}
 
-                  <TouchableOpacity style={styles.tabButton} onPress={() => navigateTo(itemType === 'lost' ? 'lost' : 'found')}>
+                  <TouchableOpacity style={styles.tabButton} onPress={() => {
+                    setDatePickerField(null);
+                    navigateTo(itemType === 'lost' ? 'lost' : 'found');
+                  }}>
                     <Text style={styles.tabText}>Cancelar</Text>
                   </TouchableOpacity>
               </View>
