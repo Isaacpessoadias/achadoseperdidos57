@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -241,7 +241,7 @@ const uploadImage = async (uri, fileName, webFile) => {
   throw new Error(errorMessage);
 };
 
-function CommentItem({ comment, itemId, user, profileName, profileImage }) {
+const CommentItem = React.memo(function CommentItem({ comment, itemId, user, profileName, profileImage }) {
   const [isReplying, setIsReplying] = useState(false);
   const [showReplies, setShowReplies] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -348,7 +348,7 @@ function CommentItem({ comment, itemId, user, profileName, profileImage }) {
       ))}
     </View>
   );
-}
+});
 
 export default function App() {
   const [screen, setScreen] = useState('login');
@@ -398,6 +398,7 @@ export default function App() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const scrollViewRef = useRef(null);
+  const categoryOptions = useMemo(() => ['Todas', ...ITEM_CATEGORIES.map((option) => option.label)], []);
   const isItemListView = activeView === 'lost' || activeView === 'found';
   const hasDateFilter = filterDateMode === 'single'
     ? Boolean(filterDateStart)
@@ -414,7 +415,7 @@ export default function App() {
     && loadedCommentsForItemId !== selectedItem.id
     && !commentsError;
 
-  const navigateTo = (view) => {
+  const navigateTo = useCallback((view) => {
     setActiveView(view);
     setShowScrollTop(false);
     setShowAddMenu(false);
@@ -424,7 +425,7 @@ export default function App() {
       setCommentsError('');
     }
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-  };
+  }, []);
 
   useEffect(() => {
     if (activeView !== 'itemDetail' || !selectedItem?.id) {
@@ -468,7 +469,7 @@ export default function App() {
     });
 
     return unsubscribe;
-  }, []);
+  }, [navigateTo]);
 
   useEffect(() => {
     const loginSuccessMessage = 'Login realizado com sucesso!';
@@ -602,9 +603,9 @@ export default function App() {
           setIsSavingProfile(false);
         }
       };
-  const openProfile = () => {
+  const openProfile = useCallback(() => {
     navigateTo('profile');
-  };
+  }, [navigateTo]);
 
   const handleRegister = async () => {
     if (!fullName.trim() || !email.trim() || !password.trim()) {
@@ -1057,6 +1058,34 @@ export default function App() {
     }
   };
 
+  const filteredItemsByType = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+
+    return {
+      lost: foundItems.filter((item) => {
+        const matchesType = (item.type || 'found') === 'lost';
+        const matchesCategory = selectedCategory === 'Todas'
+          || normalizeItemCategory(item.category) === selectedCategory;
+        const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
+        return matchesType && matchesCategory && searchableText.includes(normalizedQuery);
+      }),
+      found: foundItems.filter((item) => {
+        const matchesType = (item.type || 'found') === 'found';
+        const matchesCategory = selectedCategory === 'Todas'
+          || normalizeItemCategory(item.category) === selectedCategory;
+        const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
+        return matchesType && matchesCategory && searchableText.includes(normalizedQuery);
+      }),
+    };
+  }, [foundItems, searchQuery, selectedCategory]);
+
+  const myItemsOnly = useMemo(
+    () => foundItems.filter((item) => item.userId === user?.uid),
+    [foundItems, user?.uid],
+  );
+
+  const renderItemList = useCallback((items, type, ownItemsOnly = false) => {
+    if (!items.length) {
   const renderItemList = (type, ownItemsOnly = false) => {
     const filteredItems = foundItems.filter((item) => {
       const matchesType = type === 'all' || (item.type || 'found') === type;
@@ -1094,7 +1123,7 @@ export default function App() {
 
     return (
       <View style={styles.itemGrid}>
-        {filteredItems.map((item) => {
+        {items.map((item) => {
           const itemIsLost = (item.type || 'found') === 'lost';
           const itemDateLabel = item.eventDateStart
             ? `${formatStoredDate(item.eventDateStart)}${item.eventDateEnd ? ` até ${formatStoredDate(item.eventDateEnd)}` : ''}`
@@ -1138,7 +1167,7 @@ export default function App() {
         })}
       </View>
     );
-  };
+  }, [navigateTo, searchQuery, selectedCategory]);
 
   if (user) {
     return (
@@ -1200,7 +1229,7 @@ export default function App() {
                     showsHorizontalScrollIndicator
                     contentContainerStyle={styles.categoryRow}
                   >
-                    {['Todas', ...ITEM_CATEGORIES.map((option) => option.label)].map((category) => {
+                    {categoryOptions.map((category) => {
                       const categoryOption = ITEM_CATEGORIES.find((option) => option.label === category);
                       return (
                         <TouchableOpacity
@@ -1287,7 +1316,7 @@ export default function App() {
             {activeView === 'lost' && (
               <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
-                {renderItemList('lost')}
+                {renderItemList(filteredItemsByType.lost, 'lost')}
               </View>
             )}
 
@@ -1298,7 +1327,7 @@ export default function App() {
                   <Text style={styles.resultCount}>{foundItems.filter((item) => (item.type || 'found') === 'found').length} itens</Text>
                 </View>
                 <Text style={styles.title}>Itens Achados</Text>
-                {renderItemList('found')}
+                {renderItemList(filteredItemsByType.found, 'found')}
               </View>
             )}
 
@@ -1435,7 +1464,11 @@ export default function App() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                {renderItemList(myItemFilter, true)}
+                {renderItemList(
+                  myItemsOnly.filter((item) => myItemFilter === 'all' || (item.type || 'found') === myItemFilter),
+                  myItemFilter,
+                  true,
+                )}
               </View>
             )}
 
