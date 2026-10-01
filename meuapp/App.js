@@ -361,6 +361,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [showCategoryFilters, setShowCategoryFilters] = useState(false);
+  const [filterDateMode, setFilterDateMode] = useState('single');
+  const [filterDateStart, setFilterDateStart] = useState('');
+  const [filterDateEnd, setFilterDateEnd] = useState('');
+  const [filterDatePickerField, setFilterDatePickerField] = useState(null);
   const [myItemFilter, setMyItemFilter] = useState('all');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
@@ -395,6 +399,9 @@ export default function App() {
   const [showAddMenu, setShowAddMenu] = useState(false);
   const scrollViewRef = useRef(null);
   const isItemListView = activeView === 'lost' || activeView === 'found';
+  const hasDateFilter = filterDateMode === 'single'
+    ? Boolean(filterDateStart)
+    : Boolean(filterDateStart || filterDateEnd);
   const activeNavigationView = ['profile', 'settings', 'myItems'].includes(activeView)
     ? 'profile'
     : activeView === 'addItem'
@@ -412,6 +419,7 @@ export default function App() {
     setShowScrollTop(false);
     setShowAddMenu(false);
     setShowCategoryFilters(false);
+    setFilterDatePickerField(null);
     if (view === 'itemDetail') {
       setCommentsError('');
     }
@@ -838,6 +846,85 @@ export default function App() {
     );
   };
 
+  const updateFilterDate = (field, date) => {
+    const value = toStoredDate(date);
+    if (field === 'start') {
+      setFilterDateStart(value);
+      if (filterDateEnd && value > filterDateEnd) {
+        setFilterDateEnd('');
+      }
+      return;
+    }
+
+    setFilterDateEnd(value);
+  };
+
+  const openFilterDatePicker = (field) => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: fromStoredDate(field === 'start' ? filterDateStart : filterDateEnd),
+        mode: 'date',
+        minimumDate: field === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined,
+        maximumDate: field === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined,
+        onValueChange: (_event, date) => {
+          if (date) {
+            updateFilterDate(field, date);
+          }
+        },
+      });
+      return;
+    }
+
+    setFilterDatePickerField(field);
+  };
+
+  const renderFilterDateField = (field, placeholder) => {
+    const value = field === 'start' ? filterDateStart : filterDateEnd;
+    const dateConstraints = {
+      min: field === 'end' && filterDateStart ? filterDateStart : undefined,
+      max: field === 'start' && filterDateEnd ? filterDateEnd : undefined,
+    };
+
+    if (Platform.OS === 'web') {
+      return React.createElement('input', {
+        type: 'date',
+        value,
+        ...dateConstraints,
+        'aria-label': placeholder,
+        onChange: (event) => {
+          if (event.target.value) {
+            updateFilterDate(field, fromStoredDate(event.target.value));
+          }
+        },
+        style: {
+          boxSizing: 'border-box',
+          width: '100%',
+          height: '50px',
+          marginBottom: '10px',
+          padding: '13px 14px',
+          border: '1px solid #E5E1EA',
+          borderRadius: '12px',
+          backgroundColor: '#FFFFFF',
+          color: '#24212B',
+          fontSize: '16px',
+        },
+      });
+    }
+
+    return (
+      <TouchableOpacity
+        style={[styles.input, styles.dateFilterInput]}
+        onPress={() => openFilterDatePicker(field)}
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${placeholder}: ${formatStoredDate(value)}` : placeholder}
+      >
+        <Text style={[styles.dateInputText, !value && styles.dateInputPlaceholder]}>
+          {value ? formatStoredDate(value) : placeholder}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const handleAddItem = async () => {
     if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
       setStatus({ type: 'error', text: 'Preencha todos os campos.' });
@@ -976,8 +1063,16 @@ export default function App() {
       const matchesOwner = !ownItemsOnly || item.userId === user?.uid;
       const matchesCategory = selectedCategory === 'Todas'
         || normalizeItemCategory(item.category) === selectedCategory;
+      const itemDateStart = item.eventDateStart;
+      const itemDateEnd = item.eventDateEnd || itemDateStart;
+      const matchesDate = !hasDateFilter || (itemDateStart && (
+        filterDateMode === 'single'
+          ? itemDateStart <= filterDateStart && itemDateEnd >= filterDateStart
+          : itemDateEnd >= (filterDateStart || '0000-01-01')
+            && itemDateStart <= (filterDateEnd || '9999-12-31')
+      ));
       const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
-      return matchesType && matchesOwner && matchesCategory
+      return matchesType && matchesOwner && matchesCategory && matchesDate
         && searchableText.includes(searchQuery.trim().toLocaleLowerCase());
     });
 
@@ -986,7 +1081,7 @@ export default function App() {
         <View style={styles.emptyState}>
           <Text style={styles.emptyStateMark}>◎</Text>
           <Text style={styles.cardTitle}>
-            {searchQuery || selectedCategory !== 'Todas'
+            {searchQuery || selectedCategory !== 'Todas' || hasDateFilter
               ? 'Nenhum resultado encontrado'
               : ownItemsOnly
                 ? 'Você ainda não publicou nenhum item'
@@ -1001,6 +1096,9 @@ export default function App() {
       <View style={styles.itemGrid}>
         {filteredItems.map((item) => {
           const itemIsLost = (item.type || 'found') === 'lost';
+          const itemDateLabel = item.eventDateStart
+            ? `${formatStoredDate(item.eventDateStart)}${item.eventDateEnd ? ` até ${formatStoredDate(item.eventDateEnd)}` : ''}`
+            : '';
           return (
             <TouchableOpacity
               style={styles.itemCard}
@@ -1033,6 +1131,7 @@ export default function App() {
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
                 <Text style={styles.cardText} numberOfLines={2}>{item.description}</Text>
                 <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
+                {itemDateLabel ? <Text style={styles.itemDate} numberOfLines={1}>Data: {itemDateLabel}</Text> : null}
               </View>
             </TouchableOpacity>
           );
@@ -1072,16 +1171,19 @@ export default function App() {
                   />
                   {searchQuery ? <TouchableOpacity onPress={() => setSearchQuery('')}><Text style={styles.clearSearch}>×</Text></TouchableOpacity> : null}
                   <TouchableOpacity
-                    style={[styles.categoryFilterButton, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterButtonActive]}
-                    onPress={() => setShowCategoryFilters((showing) => !showing)}
+                    style={[styles.categoryFilterButton, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterButtonActive]}
+                    onPress={() => {
+                      setShowCategoryFilters((showing) => !showing);
+                      setFilterDatePickerField(null);
+                    }}
                     accessibilityRole="button"
-                    accessibilityLabel="Filtrar por categoria"
-                    accessibilityState={{ expanded: showCategoryFilters, selected: selectedCategory !== 'Todas' }}
+                    accessibilityLabel="Abrir filtros"
+                    accessibilityState={{ expanded: showCategoryFilters, selected: selectedCategory !== 'Todas' || hasDateFilter }}
                   >
                     <View style={styles.categoryFilterIcon}>
-                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkWide, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterMarkActive]} />
-                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkMiddle, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterMarkActive]} />
-                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkNarrow, (showCategoryFilters || selectedCategory !== 'Todas') && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkWide, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkMiddle, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkNarrow, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
                     </View>
                   </TouchableOpacity>
                 </View>
@@ -1113,6 +1215,71 @@ export default function App() {
                       );
                     })}
                   </ScrollView>
+                )}
+                {showCategoryFilters && (
+                  <View style={styles.dateFilterPanel}>
+                    <View style={styles.dateFilterHeader}>
+                      <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
+                      {hasDateFilter ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setFilterDateStart('');
+                            setFilterDateEnd('');
+                            setFilterDateMode('single');
+                            setFilterDatePickerField(null);
+                          }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={styles.dateFilterClear}>Limpar</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <View style={styles.authModeRow} accessibilityRole="radiogroup">
+                      {[
+                        { key: 'single', label: 'Uma data' },
+                        { key: 'period', label: 'Período' },
+                      ].map((mode) => (
+                        <TouchableOpacity
+                          key={mode.key}
+                          style={[styles.authModeButton, filterDateMode === mode.key && styles.authModeButtonActive]}
+                          onPress={() => {
+                            setFilterDateMode(mode.key);
+                            setFilterDatePickerField(null);
+                            if (mode.key === 'single') {
+                              setFilterDateEnd('');
+                            }
+                          }}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: filterDateMode === mode.key }}
+                        >
+                          <Text style={[styles.authModeText, filterDateMode === mode.key && styles.authModeTextActive]}>
+                            {mode.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    {renderFilterDateField('start', filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
+                    {filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
+                    {Platform.OS === 'ios' && filterDatePickerField ? (
+                      <View style={styles.filterDatePickerPanel}>
+                        <DateTimePicker
+                          value={fromStoredDate(filterDatePickerField === 'start' ? filterDateStart : filterDateEnd)}
+                          mode="date"
+                          display="spinner"
+                          locale="pt-BR"
+                          minimumDate={filterDatePickerField === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined}
+                          maximumDate={filterDatePickerField === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined}
+                          onValueChange={(_event, date) => date && updateFilterDate(filterDatePickerField, date)}
+                        />
+                        <TouchableOpacity
+                          style={styles.filterDatePickerDone}
+                          onPress={() => setFilterDatePickerField(null)}
+                        >
+                          <Text style={styles.datePickerDoneText}>Concluir</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
                 )}
               </>
             )}
@@ -2301,6 +2468,49 @@ const styles = StyleSheet.create({
   categoryFilterButtonActive: {
     backgroundColor: '#F0EBF8',
   },
+  dateFilterPanel: {
+    marginBottom: 14,
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E7E2EC',
+    borderRadius: 12,
+  },
+  dateFilterHeader: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  dateFilterTitle: {
+    color: '#24212B',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dateFilterClear: {
+    color: '#6336C8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dateFilterInput: {
+    minHeight: 50,
+    marginBottom: 10,
+  },
+  filterDatePickerPanel: {
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: '#F7F6FA',
+  },
+  filterDatePickerDone: {
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+    borderRadius: 8,
+    backgroundColor: '#6336C8',
+  },
   categoryFilterIcon: {
     alignItems: 'center',
     gap: 3,
@@ -2459,6 +2669,11 @@ const styles = StyleSheet.create({
     color: '#7656B5',
     fontSize: 11,
     marginTop: 7,
+  },
+  itemDate: {
+    color: '#68636F',
+    fontSize: 11,
+    marginTop: 4,
   },
   emptyState: {
     alignItems: 'center',
