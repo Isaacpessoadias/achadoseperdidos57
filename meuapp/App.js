@@ -76,7 +76,7 @@ const ITEM_CATEGORIES = [
   { label: 'Calçados', symbol: '👟' },
   { label: 'Outros', symbol: '📦' },
 ];
-const ACCOUNT_DOMAIN_HINT = 'Use e-mail @ifpe.edu.br (servidor) ou @discente.ifpe.edu.br (aluno).';
+const ACCOUNT_DOMAIN_HINT = 'Servidor: nome@jaboatao.ifpe.edu.br | Aluno: nome@discente.ifpe.edu.br';
 
 const normalizeItemCategory = (category) => {
   const normalizedCategory = (category || '')
@@ -163,7 +163,7 @@ const getAccountType = (emailAddress) => {
     return 'student';
   }
 
-  if (/^[^@\s]+@ifpe\.edu\.br$/.test(normalizedEmail)) {
+  if (/^[^@\s]+@(?:[a-z0-9-]+\.)?ifpe\.edu\.br$/.test(normalizedEmail)) {
     return 'server';
   }
 
