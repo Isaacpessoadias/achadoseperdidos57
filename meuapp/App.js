@@ -1726,20 +1726,20 @@ export default function App() {
               )}
               <View style={styles.bottomBar}>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'lost' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); navigateTo('lost'); }}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: activeNavigationView === 'lost' }}
-                >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'found' && styles.bottomNavButtonActive]}
                   onPress={() => { setSelectedCategory('Todas'); navigateTo('found'); }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeNavigationView === 'found' }}
                 >
                   <Text style={[styles.bottomNavText, activeNavigationView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'lost' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('lost'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'lost' }}
+                >
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
