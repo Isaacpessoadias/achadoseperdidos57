@@ -44,6 +44,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -90,6 +91,11 @@ const getAccountType = (emailAddress) => {
   }
 
   return null;
+};
+
+const formatDateTime = (value) => {
+  const date = value?.toDate?.() || (value ? new Date(value) : null);
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('pt-BR') : 'Horário indisponível';
 };
 
 const getFriendlyAuthError = (error, action) => {
@@ -278,7 +284,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
-  const [activeView, setActiveView] = useState('lost');
+  const [activeView, setActiveView] = useState('found');
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [isEditingAccount, setIsEditingAccount] = useState(false);
@@ -296,6 +302,14 @@ export default function App() {
   const [itemComments, setItemComments] = useState([]);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [isSendingFoundNotice, setIsSendingFoundNotice] = useState(false);
+  const [isMarkingRecovered, setIsMarkingRecovered] = useState(false);
+  const [isRecoveryFormVisible, setIsRecoveryFormVisible] = useState(false);
+  const [recoveredPersonName, setRecoveredPersonName] = useState('');
+  const [recoveredPersonClass, setRecoveredPersonClass] = useState('');
+  const [recoveredPersonEnrollment, setRecoveredPersonEnrollment] = useState('');
+  const [recoveryPerson, setRecoveryPerson] = useState(null);
+  const [isLoadingRecoveryPerson, setIsLoadingRecoveryPerson] = useState(false);
   const [isLoadingComments, setIsLoadingComments] = useState(false);
   const [commentsError, setCommentsError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -309,7 +323,7 @@ export default function App() {
   const [itemType, setItemType] = useState('found');
   const [showScrollTop, setShowScrollTop] = useState(false);
   const scrollViewRef = useRef(null);
-  const isItemListView = activeView === 'lost' || activeView === 'found';
+  const isItemListView = activeView === 'lost' || activeView === 'found' || activeView === 'recovered';
 
   useEffect(() => {
     if (activeView !== 'itemDetail' || !selectedItem?.id) {
@@ -342,6 +356,38 @@ export default function App() {
   }, [activeView, selectedItem]);
 
   useEffect(() => {
+    const canViewRecoveryPerson = getAccountType(user?.email) === 'server'
+      || selectedItem?.userId === user?.uid;
+    if (activeView !== 'itemDetail' || selectedItem?.status !== 'recovered' || !canViewRecoveryPerson) {
+      setRecoveryPerson(null);
+      return undefined;
+    }
+
+    let isActive = true;
+    setIsLoadingRecoveryPerson(true);
+    getDoc(doc(db, 'items', selectedItem.id, 'recoveryDetails', 'claimant'))
+      .then((snapshot) => {
+        if (isActive) {
+          setRecoveryPerson(snapshot.exists() ? snapshot.data() : null);
+        }
+      })
+      .catch((error) => {
+        if (isActive) {
+          setStatus({ type: 'error', text: getFirestoreError(error, 'carregar os dados da recuperação') });
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoadingRecoveryPerson(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [activeView, selectedItem?.id, selectedItem?.status, selectedItem?.userId, user]);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser && !getAccountType(currentUser.email)) {
         await signOut(auth);
@@ -352,7 +398,7 @@ export default function App() {
 
       setUser(currentUser);
       if (currentUser) {
-        setActiveView('lost');
+        setActiveView('found');
       }
     });
 
@@ -363,6 +409,13 @@ export default function App() {
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     setShowScrollTop(false);
   }, [activeView]);
+
+  useEffect(() => {
+    setIsRecoveryFormVisible(false);
+    setRecoveredPersonName('');
+    setRecoveredPersonClass('');
+    setRecoveredPersonEnrollment('');
+  }, [selectedItem?.id]);
 
   useEffect(() => {
     const loginSuccessMessage = 'Login realizado com sucesso!';
@@ -509,7 +562,7 @@ export default function App() {
       setUser(userCredential.user);
       setProfileName(normalizedName);
       setProfileImage('');
-      setActiveView('lost');
+      setActiveView('found');
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
     } catch (error) {
@@ -532,7 +585,7 @@ export default function App() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
-      setActiveView('lost');
+      setActiveView('found');
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
       clearForm();
     } catch (error) {
@@ -546,7 +599,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('lost');
+      setActiveView('found');
       setStatus({ type: 'success', text: 'Você saiu da conta com sucesso.' });
       clearForm();
       setScreen('login');
@@ -669,6 +722,7 @@ export default function App() {
         location: itemLocation.trim(),
         category: itemCategory.trim(),
         type: itemType,
+        status: 'active',
         imageUrl: safeImageUrl,
         createdAt: new Date().toISOString(),
         foundAt: new Date().toISOString(),
@@ -720,6 +774,87 @@ export default function App() {
       setCommentsError(getFirestoreError(error, 'enviar o comentário'));
     } finally {
       setIsSubmittingComment(false);
+    }
+  };
+
+  const handleReportItemFound = async () => {
+    if (!selectedItem?.id || !selectedItem.userId || selectedItem.userId === user.uid || isSendingFoundNotice) {
+      return;
+    }
+
+    setIsSendingFoundNotice(true);
+    try {
+      await setDoc(doc(db, 'notificationRequests', selectedItem.id), {
+        itemId: selectedItem.id,
+        recipientId: selectedItem.userId,
+        createdBy: user.uid,
+        type: 'item_found',
+        title: 'Seu item foi achado',
+        body: 'Seu item foi achado.',
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      });
+      setStatus({ type: 'success', text: 'Aviso registrado para o responsável pelo item.' });
+    } catch (error) {
+      const message = error?.code === 'permission-denied'
+        ? 'Este item já foi sinalizado ou as regras do Firestore ainda não foram publicadas.'
+        : getFirestoreError(error, 'registrar o aviso');
+      setStatus({ type: 'error', text: message });
+    } finally {
+      setIsSendingFoundNotice(false);
+    }
+  };
+
+  const handleMarkRecovered = async () => {
+    if (!selectedItem?.id || getAccountType(user.email) !== 'server' || isMarkingRecovered) {
+      return;
+    }
+
+    const claimantName = recoveredPersonName.trim();
+    const claimantClass = recoveredPersonClass.trim();
+    const claimantEnrollment = recoveredPersonEnrollment.trim();
+    if (!claimantName || !claimantClass || !claimantEnrollment) {
+      setStatus({ type: 'error', text: 'Informe o nome, a turma e a matrícula de quem recuperou o item.' });
+      return;
+    }
+
+    setIsMarkingRecovered(true);
+    const recoveredData = {
+      status: 'recovered',
+      recoveredAt: serverTimestamp(),
+      recoveredByUid: user.uid,
+      recoveredByName: profileName || user.displayName || user.email,
+      recoveredByEmail: user.email || '',
+      recoveredByPhotoUrl: profileImage || '',
+    };
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'items', selectedItem.id), recoveredData);
+      batch.set(doc(db, 'items', selectedItem.id, 'recoveryDetails', 'claimant'), {
+        name: claimantName,
+        class: claimantClass,
+        enrollment: claimantEnrollment,
+        recordedAt: serverTimestamp(),
+      });
+      await batch.commit();
+      const updatedItem = {
+        ...selectedItem,
+        ...recoveredData,
+        recoveredAt: new Date(),
+      };
+      setSelectedItem(updatedItem);
+      setFoundItems((currentItems) => currentItems.map((item) => (
+        item.id === selectedItem.id ? updatedItem : item
+      )));
+      setIsRecoveryFormVisible(false);
+      setRecoveredPersonName('');
+      setRecoveredPersonClass('');
+      setRecoveredPersonEnrollment('');
+      setStatus({ type: 'success', text: 'Item marcado como recuperado.' });
+    } catch (error) {
+      setStatus({ type: 'error', text: getFirestoreError(error, 'marcar o item como recuperado') });
+    } finally {
+      setIsMarkingRecovered(false);
     }
   };
 
@@ -816,12 +951,18 @@ export default function App() {
   };
 
   const renderItemList = (type) => {
-    const filteredItems = foundItems.filter((item) => (item.type || 'found') === type);
+    const filteredItems = foundItems.filter((item) => (
+      type === 'recovered'
+        ? item.status === 'recovered'
+        : (item.type || 'found') === type && item.status !== 'recovered'
+    ));
 
     if (!filteredItems.length) {
       return (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>{type === 'lost' ? 'Nenhum item perdido ainda' : 'Nenhum item achado ainda'}</Text>
+          <Text style={styles.cardTitle}>
+            {type === 'lost' ? 'Nenhum item perdido ainda' : type === 'recovered' ? 'Nenhum item recuperado ainda' : 'Nenhum item achado ainda'}
+          </Text>
         </View>
       );
     }
@@ -845,7 +986,16 @@ export default function App() {
         <Text style={styles.cardText}>{item.description}</Text>
         <Text style={styles.cardText}>Local: {item.location}</Text>
         <Text style={styles.cardText}>Categoria: {item.category}</Text>
-        <Text style={styles.cardText}>Tipo: {type === 'lost' ? 'Item perdido' : 'Item achado'}</Text>
+        <Text style={styles.cardText}>Tipo: {item.type === 'lost' ? 'Item perdido' : 'Item achado'}</Text>
+        {item.status === 'recovered' ? (
+          <>
+            <Text style={styles.recoveredTag}>RECUPERADO</Text>
+            <Text style={styles.cardText}>Recuperado em: {formatDateTime(item.recoveredAt)}</Text>
+            <Text style={styles.cardText}>
+              Recuperado por: {item.recoveredByName || 'Servidor'}{item.recoveredByEmail ? ` · ${item.recoveredByEmail}` : ''}
+            </Text>
+          </>
+        ) : null}
       </TouchableOpacity>
     ));
   };
@@ -869,6 +1019,9 @@ export default function App() {
             {activeView === 'lost' && (
               <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
+                <Text style={styles.listDescription}>
+                  São os itens que pessoas perderam no campus e registraram para alguém encontrá-lo.
+                </Text>
                 {renderItemList('lost')}
               </View>
             )}
@@ -876,7 +1029,18 @@ export default function App() {
             {activeView === 'found' && (
               <View>
                 <Text style={styles.title}>Itens Achados</Text>
+                <Text style={styles.listDescription}>
+                  São os itens perdidos de alguém que outras pessoas encontraram no campus.
+                </Text>
                 {renderItemList('found')}
+              </View>
+            )}
+
+            {activeView === 'recovered' && (
+              <View>
+                <Text style={styles.title}>Itens Recuperados</Text>
+                <Text style={styles.listDescription}>Lista dos itens que foram recuperados pelos seus donos</Text>
+                {renderItemList('recovered')}
               </View>
             )}
 
@@ -884,7 +1048,7 @@ export default function App() {
               <View>
                 <TouchableOpacity
                   style={styles.detailBackButton}
-                  onPress={() => setActiveView(selectedItem.type === 'lost' ? 'lost' : 'found')}
+                  onPress={() => setActiveView(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type === 'lost' ? 'lost' : 'found')}
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
@@ -898,7 +1062,10 @@ export default function App() {
                   </View>
                 )}
                 <View style={styles.detailInformation}>
-                  <Text style={styles.detailType}>{selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}</Text>
+                  <Text style={styles.detailType}>
+                    {selectedItem.status === 'recovered' ? 'ITEM RECUPERADO' : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}
+                  </Text>
+                  {selectedItem.status === 'recovered' ? <Text style={styles.recoveredTag}>RECUPERADO</Text> : null}
                   <Text style={styles.detailTitle}>{selectedItem.name}</Text>
                   <Text style={styles.detailDescription}>{selectedItem.description}</Text>
                   <View style={styles.detailDivider} />
@@ -906,7 +1073,110 @@ export default function App() {
                   <Text style={styles.detailValue}>{selectedItem.location}</Text>
                   <Text style={styles.detailLabel}>Categoria</Text>
                   <Text style={styles.detailValue}>{selectedItem.category}</Text>
+                  {selectedItem.status === 'recovered' ? (
+                    <>
+                      <Text style={styles.detailLabel}>Recuperado em</Text>
+                      <Text style={styles.detailValue}>{formatDateTime(selectedItem.recoveredAt)}</Text>
+                      <Text style={styles.detailLabel}>Registrado por</Text>
+                      <View style={styles.recoveredByRow}>
+                        <Image
+                          source={selectedItem.recoveredByPhotoUrl ? { uri: selectedItem.recoveredByPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+                          style={styles.recoveredByAvatar}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.recoveredByInfo}>
+                          <Text style={styles.detailValue}>{selectedItem.recoveredByName || 'Servidor'}</Text>
+                          {selectedItem.recoveredByEmail ? (
+                            <Text style={styles.recoveredByEmail}>{selectedItem.recoveredByEmail}</Text>
+                          ) : null}
+                        </View>
+                      </View>
+                      {isLoadingRecoveryPerson ? <ActivityIndicator color="#0f766e" /> : null}
+                      {getAccountType(user.email) === 'server' || selectedItem.userId === user.uid ? (
+                        recoveryPerson ? (
+                          <View style={styles.recoveredPersonDetails}>
+                            <Text style={styles.detailLabel}>Quem recuperou</Text>
+                            <Text style={styles.detailValue}>{recoveryPerson.name}</Text>
+                            <Text style={styles.recoveredPersonMeta}>Turma: {recoveryPerson.class}</Text>
+                            <Text style={styles.recoveredPersonMeta}>Matrícula: {recoveryPerson.enrollment}</Text>
+                          </View>
+                        ) : null
+                      ) : null}
+                    </>
+                  ) : null}
                 </View>
+                {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && selectedItem.userId !== user.uid ? (
+                  <TouchableOpacity
+                    style={[styles.foundButton, isSendingFoundNotice && styles.buttonDisabled]}
+                    onPress={handleReportItemFound}
+                    disabled={isSendingFoundNotice}
+                    accessibilityRole="button"
+                  >
+                    {isSendingFoundNotice ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Achei</Text>}
+                  </TouchableOpacity>
+                ) : null}
+                {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && getAccountType(user.email) === 'server' ? (
+                  isRecoveryFormVisible ? (
+                    <View style={styles.recoveryForm}>
+                      <Text style={styles.commentsTitle}>Dados de quem recuperou</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Nome completo"
+                        value={recoveredPersonName}
+                        onChangeText={setRecoveredPersonName}
+                        autoCapitalize="words"
+                        maxLength={100}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Turma"
+                        value={recoveredPersonClass}
+                        onChangeText={setRecoveredPersonClass}
+                        maxLength={30}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Matrícula"
+                        value={recoveredPersonEnrollment}
+                        onChangeText={setRecoveredPersonEnrollment}
+                        maxLength={40}
+                        autoCapitalize="none"
+                      />
+                      <TouchableOpacity
+                        style={[styles.recoveredButton, isMarkingRecovered && styles.buttonDisabled]}
+                        onPress={handleMarkRecovered}
+                        disabled={isMarkingRecovered}
+                        accessibilityRole="button"
+                      >
+                        {isMarkingRecovered ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Confirmar recuperação</Text>}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.cancelRecoveryButton}
+                        onPress={() => {
+                          setIsRecoveryFormVisible(false);
+                          setRecoveredPersonName('');
+                          setRecoveredPersonClass('');
+                          setRecoveredPersonEnrollment('');
+                        }}
+                        disabled={isMarkingRecovered}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.cancelButtonText}>Cancelar</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.recoveredButton}
+                      onPress={() => setIsRecoveryFormVisible(true)}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.buttonText}>Marcar como recuperado</Text>
+                    </TouchableOpacity>
+                  )
+                ) : null}
+                {status.text ? (
+                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+                ) : null}
                 <View style={styles.commentsSection}>
                   <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
                   {commentsError ? <Text style={styles.errorText}>{commentsError}</Text> : null}
@@ -1151,7 +1421,7 @@ export default function App() {
               </ScrollView>
               {(isItemListView || showScrollTop) && (
                 <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
-                  {isItemListView && (
+                  {(activeView === 'lost' || activeView === 'found') && (
                     <TouchableOpacity
                       style={styles.floatingAddButton}
                       onPress={() => {
@@ -1180,16 +1450,22 @@ export default function App() {
               )}
               <View style={styles.bottomBar}>
                 <TouchableOpacity
+                  style={[styles.bottomNavButton, activeView === 'found' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('found')}
+                >
+                  <Text style={[styles.bottomNavText, activeView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[styles.bottomNavButton, activeView === 'lost' && styles.bottomNavButtonActive]}
                   onPress={() => setActiveView('lost')}
                 >
                   <Text style={[styles.bottomNavText, activeView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, activeView === 'found' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('found')}
+                  style={[styles.bottomNavButton, activeView === 'recovered' && styles.bottomNavButtonActive]}
+                  onPress={() => setActiveView('recovered')}
                 >
-                  <Text style={[styles.bottomNavText, activeView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                  <Text style={[styles.bottomNavText, activeView === 'recovered' && styles.bottomNavTextActive]}>Recuperados</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, styles.profileNavButton, activeView === 'profile' && styles.bottomNavButtonActive]}
@@ -1546,7 +1822,7 @@ const styles = StyleSheet.create({
   },
   bottomNavText: {
     color: '#527064',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
   },
@@ -1888,6 +2164,13 @@ const styles = StyleSheet.create({
     color: '#527064',
     lineHeight: 21,
   },
+  listDescription: {
+    marginTop: -8,
+    marginBottom: 16,
+    color: '#527064',
+    fontSize: 14,
+    lineHeight: 21,
+  },
   itemImage: {
     width: '100%',
     height: 180,
@@ -1961,6 +2244,72 @@ const styles = StyleSheet.create({
     marginTop: 3,
     color: '#153b2e',
     fontSize: 16,
+  },
+  recoveredTag: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    marginBottom: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#dcefe4',
+    color: '#205c3b',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  foundButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    borderRadius: 10,
+    backgroundColor: '#0f766e',
+  },
+  recoveredButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    borderRadius: 10,
+    backgroundColor: '#205c3b',
+  },
+  recoveryForm: {
+    marginBottom: 16,
+  },
+  recoveredPersonDetails: {
+    marginTop: 12,
+  },
+  recoveredPersonMeta: {
+    marginTop: 4,
+    color: '#36584a',
+    fontSize: 15,
+  },
+  cancelRecoveryButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#e2eee9',
+  },
+  recoveredByRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 5,
+  },
+  recoveredByAvatar: {
+    width: 42,
+    height: 42,
+    marginRight: 10,
+    borderRadius: 21,
+    backgroundColor: '#e2eee9',
+  },
+  recoveredByInfo: {
+    flexShrink: 1,
+  },
+  recoveredByEmail: {
+    marginTop: 2,
+    color: '#527064',
+    fontSize: 13,
   },
   commentsSection: {
     paddingTop: 20,

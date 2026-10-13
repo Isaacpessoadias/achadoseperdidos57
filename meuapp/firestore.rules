@@ -1,16 +1,66 @@
 rules_version = '2';
 
 service cloud.firestore {
+  function isServer() {
+    return request.auth != null
+      && request.auth.token.email is string
+      && request.auth.token.email.matches('^[^@]+@ifpe[.]edu[.]br$');
+  }
+
   match /databases/{database}/documents {
     // Profiles: only owner can read/write
     match /profiles/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
-    // Items: anyone can read, owner can create/update/delete
+    // Items: signed-in users can read; owners manage items and servers mark losses recovered.
     match /items/{itemId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null
+        && resource.data.userId == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'status', 'recoveredAt', 'recoveredByUid', 'recoveredByName', 'recoveredByEmail', 'recoveredByPhotoUrl'
+        ])
+        || isServer()
+        && resource.data.type == 'lost'
+        && resource.data.get('status', 'active') != 'recovered'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'recoveredAt', 'recoveredByUid', 'recoveredByName', 'recoveredByEmail', 'recoveredByPhotoUrl'
+        ])
+        && request.resource.data.status == 'recovered'
+        && request.resource.data.recoveredAt == request.time
+        && request.resource.data.recoveredByUid == request.auth.uid
+        && request.resource.data.recoveredByName is string
+        && request.resource.data.recoveredByName.size() > 0
+        && request.resource.data.recoveredByName.size() <= 100
+        && request.resource.data.recoveredByEmail == request.auth.token.email
+        && request.resource.data.recoveredByPhotoUrl is string
+        && request.resource.data.recoveredByName == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('name', '')
+        && request.resource.data.recoveredByPhotoUrl == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('photoUrl', '');
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+
+      match /recoveryDetails/{detailId} {
+        allow read: if request.auth != null
+          && (isServer()
+            || get(/databases/$(database)/documents/items/$(itemId)).data.userId == request.auth.uid);
+        allow create: if isServer()
+          && detailId == 'claimant'
+          && request.resource.data.keys().hasOnly(['name', 'class', 'enrollment', 'recordedAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 100
+          && request.resource.data.class is string
+          && request.resource.data.class.size() > 0
+          && request.resource.data.class.size() <= 30
+          && request.resource.data.enrollment is string
+          && request.resource.data.enrollment.size() > 0
+          && request.resource.data.enrollment.size() <= 40
+          && request.resource.data.recordedAt == request.time
+          && get(/databases/$(database)/documents/items/$(itemId)).data.type == 'lost'
+          && get(/databases/$(database)/documents/items/$(itemId)).data.get('status', 'active') != 'recovered';
+        allow update, delete: if false;
+      }
 
       match /comments/{commentId} {
         allow read: if request.auth != null;
@@ -44,6 +94,25 @@ service cloud.firestore {
           && request.resource.data.replies[request.resource.data.replies.size() - 1].createdAt is string;
         allow delete: if false;
       }
+    }
+
+    match /notificationRequests/{requestId} {
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly([
+          'itemId', 'recipientId', 'createdBy', 'type', 'title', 'body', 'status', 'createdAt'
+        ])
+        && request.resource.data.itemId == requestId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.type == 'item_found'
+        && request.resource.data.title == 'Seu item foi achado'
+        && request.resource.data.body == 'Seu item foi achado.'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && exists(/databases/$(database)/documents/items/$(requestId))
+        && get(/databases/$(database)/documents/items/$(requestId)).data.type == 'lost'
+        && get(/databases/$(database)/documents/items/$(requestId)).data.get('status', 'active') != 'recovered'
+        && get(/databases/$(database)/documents/items/$(requestId)).data.userId == request.resource.data.recipientId
+        && request.resource.data.recipientId != request.auth.uid;
     }
 
     // Collection group queries can only read the signed-in user's comments.
