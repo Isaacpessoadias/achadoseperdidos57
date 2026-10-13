@@ -1,7 +1,7 @@
-/* eslint-disable */
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useRef, useState } from 'react';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -24,8 +24,10 @@ import {
   inMemoryPersistence,
   onAuthStateChanged,
   reauthenticateWithCredential,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signOut,
+  updateEmail,
   updatePassword,
   updateProfile,
 } from 'firebase/auth';
@@ -39,12 +41,12 @@ import {
   getDocs,
   getFirestore,
   onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
   writeBatch,
+
 } from 'firebase/firestore';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -66,18 +68,96 @@ const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'wljwnlav';
 const UPLOAD_PRESET = 'Fotos Itens';
 const ITEM_CATEGORIES = [
-  'Documento',
-  'Eletronicos (celular, notebook etc)',
-  'Garrafa',
-  'Material Escolar',
-  'Óculos',
-  'Guarda Chuva',
-  'Bolsa',
-  'Roupas',
-  'Calçados',
-  'Outros',
+  { label: 'Documento', symbol: '📄' },
+  { label: 'Eletrônicos (celular, notebook etc)', symbol: '📱' },
+  { label: 'Garrafa', symbol: '🧴' },
+  { label: 'Material Escolar', symbol: '✏️' },
+  { label: 'Óculos', symbol: '👓' },
+  { label: 'Guarda Chuva', symbol: '☂️' },
+  { label: 'Bolsa', symbol: '👜' },
+  { label: 'Roupas', symbol: '👕' },
+  { label: 'Calçados', symbol: '👟' },
+  { label: 'Outros', symbol: '📦' },
 ];
-const ACCOUNT_DOMAIN_HINT = 'Use e-mail @ifpe.edu.br (servidor) ou @discente.ifpe.edu.br (aluno).';
+const ACCOUNT_DOMAIN_HINT = 'Servidor: nome@jaboatao.ifpe.edu.br | Aluno: nome@discente.ifpe.edu.br';
+
+const normalizeItemCategory = (category) => {
+  const normalizedCategory = (category || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase();
+
+  if (normalizedCategory.includes('documento')) {
+    return 'Documento';
+  }
+
+  if (normalizedCategory.includes('eletron')) {
+    return 'Eletrônicos (celular, notebook etc)';
+  }
+
+  if (normalizedCategory.includes('garrafa')) {
+    return 'Garrafa';
+  }
+
+  if (normalizedCategory.includes('material escolar')) {
+    return 'Material Escolar';
+  }
+
+  if (normalizedCategory.includes('ocul')) {
+    return 'Óculos';
+  }
+
+  if (normalizedCategory.includes('guarda chuva') || normalizedCategory.includes('guardachuva')) {
+    return 'Guarda Chuva';
+  }
+
+  if (normalizedCategory.includes('bolsa')) {
+    return 'Bolsa';
+  }
+
+  if (normalizedCategory.includes('roup') || normalizedCategory.includes('vestu')) {
+    return 'Roupas';
+  }
+
+  if (normalizedCategory.includes('calcad')) {
+    return 'Calçados';
+  }
+
+  return 'Outros';
+};
+
+const getCategoryOption = (category) => (
+  ITEM_CATEGORIES.find((option) => option.label === normalizeItemCategory(category))
+  || ITEM_CATEGORIES.find((option) => option.label === 'Outros')
+);
+
+const parseDateInput = (value) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (date.getFullYear() !== Number(year)
+    || date.getMonth() !== Number(month) - 1
+    || date.getDate() !== Number(day)) {
+    return null;
+  }
+
+  return value;
+};
+
+const formatStoredDate = (value) => (value ? value.split('-').reverse().join('/') : 'Não informada');
+const toStoredDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const fromStoredDate = (value) => {
+  if (!value) {
+    return new Date();
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
 
 const getAccountType = (emailAddress) => {
   const normalizedEmail = (emailAddress || '').trim().toLowerCase();
@@ -86,7 +166,7 @@ const getAccountType = (emailAddress) => {
     return 'student';
   }
 
-  if (/^[^@\s]+@ifpe\.edu\.br$/.test(normalizedEmail)) {
+  if (/^[^@\s]+@(?:[a-z0-9-]+\.)?ifpe\.edu\.br$/.test(normalizedEmail)) {
     return 'server';
   }
 
@@ -105,6 +185,7 @@ const getFriendlyAuthError = (error, action) => {
     'auth/user-disabled': 'Essa conta foi desativada. Entre em contato com o suporte.',
     'auth/user-not-found': 'Nenhuma conta foi encontrada com esse e-mail.',
     'auth/wrong-password': 'Senha incorreta. Tente novamente.',
+    'auth/invalid-credential': 'Senha atual incorreta. Confira e tente novamente.',
     'auth/email-already-in-use': 'Esse e-mail já está cadastrado. Faça login ou use outro e-mail.',
     'auth/weak-password': 'A senha deve ter pelo menos 6 caracteres.',
     'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente de novo.',
@@ -168,7 +249,7 @@ const uploadImage = async (uri, fileName, webFile) => {
   throw new Error(errorMessage);
 };
 
-function CommentItem({ comment, itemId, user, profileName, profileImage }) {
+const CommentItem = React.memo(function CommentItem({ comment, itemId, user, profileName, profileImage }) {
   const [isReplying, setIsReplying] = useState(false);
   const [showReplies, setShowReplies] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -275,7 +356,7 @@ function CommentItem({ comment, itemId, user, profileName, profileImage }) {
       ))}
     </View>
   );
-}
+});
 
 export default function App() {
   const [screen, setScreen] = useState('login');
@@ -285,21 +366,28 @@ export default function App() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState('found');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('Todas');
+  const [showCategoryFilters, setShowCategoryFilters] = useState(false);
+  const [filterDateMode, setFilterDateMode] = useState('single');
+  const [filterDateStart, setFilterDateStart] = useState('');
+  const [filterDateEnd, setFilterDateEnd] = useState('');
+  const [filterDatePickerField, setFilterDatePickerField] = useState(null);
+  const [myItemFilter, setMyItemFilter] = useState('all');
+
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
-  const [isEditingAccount, setIsEditingAccount] = useState(false);
-  const [profileSection, setProfileSection] = useState('account');
-  const [commentedItems, setCommentedItems] = useState([]);
-  const [isLoadingCommentedItems, setIsLoadingCommentedItems] = useState(false);
-  const [commentedItemsError, setCommentedItemsError] = useState('');
-  const [editProfileName, setEditProfileName] = useState('');
+  const [editingProfileField, setEditingProfileField] = useState('');
+  const [profileNameDraft, setProfileNameDraft] = useState('');
+  const [profileEmailDraft, setProfileEmailDraft] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [foundItems, setFoundItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [itemComments, setItemComments] = useState([]);
+  const [loadedCommentsForItemId, setLoadedCommentsForItemId] = useState(null);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [isSendingFoundNotice, setIsSendingFoundNotice] = useState(false);
@@ -311,27 +399,59 @@ export default function App() {
   const [recoveryPerson, setRecoveryPerson] = useState(null);
   const [isLoadingRecoveryPerson, setIsLoadingRecoveryPerson] = useState(false);
   const [isLoadingComments, setIsLoadingComments] = useState(false);
+
   const [commentsError, setCommentsError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [itemName, setItemName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [itemLocation, setItemLocation] = useState('');
+  const [itemDateStart, setItemDateStart] = useState('');
+  const [itemDateEnd, setItemDateEnd] = useState('');
+  const [itemDateMode, setItemDateMode] = useState('single');
+  const [datePickerField, setDatePickerField] = useState(null);
   const [itemCategory, setItemCategory] = useState('');
   const [showCategoryOptions, setShowCategoryOptions] = useState(false);
   const [itemImage, setItemImage] = useState(null);
   const [itemImageFile, setItemImageFile] = useState(null);
   const [itemType, setItemType] = useState('found');
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
   const scrollViewRef = useRef(null);
+  const categoryOptions = useMemo(() => ['Todas', ...ITEM_CATEGORIES.map((option) => option.label)], []);
   const isItemListView = activeView === 'lost' || activeView === 'found' || activeView === 'recovered';
+  const hasDateFilter = filterDateMode === 'single'
+    ? Boolean(filterDateStart)
+    : Boolean(filterDateStart || filterDateEnd);
+  const activeNavigationView = ['profile', 'settings', 'myItems'].includes(activeView)
+    ? 'profile'
+    : activeView === 'addItem'
+      ? itemType
+      : activeView === 'itemDetail'
+        ? selectedItem?.type || 'found'
+        : activeView;
+  const isLoadingComments = activeView === 'itemDetail'
+    && Boolean(selectedItem?.id)
+    && loadedCommentsForItemId !== selectedItem.id
+    && !commentsError;
+
+  const navigateTo = useCallback((view) => {
+    setActiveView(view);
+    setShowScrollTop(false);
+    setShowAddMenu(false);
+    setShowCategoryFilters(false);
+    setFilterDatePickerField(null);
+    if (view === 'itemDetail') {
+      setCommentsError('');
+    }
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+  }, []);
+
 
   useEffect(() => {
     if (activeView !== 'itemDetail' || !selectedItem?.id) {
-      return undefined;
+      return;
     }
 
-    setIsLoadingComments(true);
-    setCommentsError('');
     const unsubscribe = onSnapshot(
       collection(db, 'items', selectedItem.id, 'comments'),
       (snapshot) => {
@@ -344,11 +464,11 @@ export default function App() {
           });
 
         setItemComments(comments);
-        setIsLoadingComments(false);
+        setLoadedCommentsForItemId(selectedItem.id);
       },
       (error) => {
         setCommentsError(getFirestoreError(error, 'carregar os comentários'));
-        setIsLoadingComments(false);
+        setLoadedCommentsForItemId(selectedItem.id);
       },
     );
 
@@ -398,17 +518,13 @@ export default function App() {
 
       setUser(currentUser);
       if (currentUser) {
-        setActiveView('found');
+        navigateTo('found');
       }
+
     });
 
     return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-    setShowScrollTop(false);
-  }, [activeView]);
+  }, [navigateTo]);
 
   useEffect(() => {
     setIsRecoveryFormVisible(false);
@@ -473,63 +589,85 @@ export default function App() {
     loadUserData();
   }, [user]);
 
-  useEffect(() => {
-    if (activeView !== 'profile' || profileSection !== 'commented' || !user) {
-      return;
-    }
-
-    let isActive = true;
-    const loadCommentedItems = async () => {
-      setIsLoadingCommentedItems(true);
-      setCommentedItemsError('');
-      try {
-        const itemIds = new Set();
-        for (let index = 0; index < foundItems.length; index += 10) {
-          if (!isActive) {
-            return;
-          }
-
-          const itemBatch = foundItems.slice(index, index + 10);
-          const commentSnapshots = await Promise.all(itemBatch.map((item) => getDocs(
-            query(
-              collection(db, 'items', item.id, 'comments'),
-              where('userId', '==', user.uid),
-            ),
-          )));
-
-          commentSnapshots.forEach((commentsSnapshot, batchIndex) => {
-            if (!commentsSnapshot.empty) {
-              itemIds.add(itemBatch[batchIndex].id);
-            }
-          });
-        }
-
-        if (isActive) {
-          setCommentedItems(foundItems.filter((item) => itemIds.has(item.id)));
-        }
-      } catch (error) {
-        if (isActive) {
-          setCommentedItemsError(getFirestoreError(error, 'carregar os itens comentados'));
-          setCommentedItems([]);
-        }
-      } finally {
-        if (isActive) {
-          setIsLoadingCommentedItems(false);
-        }
-      }
-    };
-
-    loadCommentedItems();
-    return () => {
-      isActive = false;
-    };
-  }, [activeView, profileSection, user, foundItems]);
-
   const clearForm = () => {
     setFullName('');
     setEmail('');
     setPassword('');
   };
+
+  const startEditingProfileField = (field) => {
+        setEditingProfileField(field);
+        setProfileNameDraft(profileName || user?.displayName || '');
+        setProfileEmailDraft(user?.email || '');
+        setCurrentPassword('');
+        setNewPassword('');
+        setStatus({ type: '', text: '' });
+      };
+
+      const handleSaveProfileField = async () => {
+        const currentUser = auth.currentUser;
+        if (!currentUser) {
+          setStatus({ type: 'error', text: 'Entre novamente para editar seu perfil.' });
+          return;
+        }
+
+        if (editingProfileField === 'name' && !profileNameDraft.trim()) {
+          setStatus({ type: 'error', text: 'Informe seu nome para continuar.' });
+          return;
+        }
+
+        if (editingProfileField === 'email' && !profileEmailDraft.trim()) {
+          setStatus({ type: 'error', text: 'Informe um e-mail válido para continuar.' });
+          return;
+        }
+
+        if (editingProfileField !== 'name' && !currentPassword) {
+          setStatus({ type: 'error', text: 'Informe sua senha atual para confirmar a alteração.' });
+          return;
+        }
+
+        if (editingProfileField === 'password' && newPassword.length < 6) {
+          setStatus({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+          return;
+        }
+
+        setIsSavingProfile(true);
+        try {
+          if (editingProfileField === 'name') {
+            const normalizedName = profileNameDraft.trim();
+            await updateProfile(currentUser, { displayName: normalizedName });
+            await setDoc(doc(db, 'profiles', currentUser.uid), { name: normalizedName }, { merge: true });
+            setProfileName(normalizedName);
+            setStatus({ type: 'success', text: 'Seu nome foi atualizado.' });
+          } else {
+            const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+            await reauthenticateWithCredential(currentUser, credential);
+
+            if (editingProfileField === 'email') {
+              const normalizedEmail = profileEmailDraft.trim();
+              await updateEmail(currentUser, normalizedEmail);
+              await setDoc(doc(db, 'profiles', currentUser.uid), { email: normalizedEmail }, { merge: true });
+              await sendEmailVerification(currentUser);
+              setUser(currentUser);
+              setStatus({ type: 'success', text: 'E-mail atualizado. Confira sua caixa de entrada para verificá-lo.' });
+            } else {
+              await updatePassword(currentUser, newPassword);
+              setStatus({ type: 'success', text: 'Sua senha foi atualizada.' });
+            }
+          }
+
+          setEditingProfileField('');
+          setCurrentPassword('');
+          setNewPassword('');
+        } catch (error) {
+          setStatus({ type: 'error', text: getFriendlyAuthError(error, 'atualizar seu perfil') });
+        } finally {
+          setIsSavingProfile(false);
+        }
+      };
+  const openProfile = useCallback(() => {
+    navigateTo('profile');
+  }, [navigateTo]);
 
   const handleRegister = async () => {
     if (!fullName.trim() || !email.trim() || !password.trim()) {
@@ -562,7 +700,8 @@ export default function App() {
       setUser(userCredential.user);
       setProfileName(normalizedName);
       setProfileImage('');
-      setActiveView('found');
+      navigateTo('found');
+
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
     } catch (error) {
@@ -585,7 +724,8 @@ export default function App() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
-      setActiveView('found');
+      navigateTo('found');
+
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
       clearForm();
     } catch (error) {
@@ -599,7 +739,8 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('found');
+      navigateTo('found');
+
       setStatus({ type: 'success', text: 'Você saiu da conta com sucesso.' });
       clearForm();
       setScreen('login');
@@ -696,9 +837,176 @@ export default function App() {
     }
   };
 
+  const updateItemDate = (field, date) => {
+    const value = toStoredDate(date);
+    if (field === 'start') {
+      setItemDateStart(value);
+      if (itemDateEnd && value > itemDateEnd) {
+        setItemDateEnd('');
+      }
+      return;
+    }
+
+    setItemDateEnd(value);
+  };
+
+  const openItemDatePicker = (field) => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: fromStoredDate(field === 'start' ? itemDateStart : itemDateEnd),
+        mode: 'date',
+        minimumDate: field === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined,
+        maximumDate: field === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined,
+        onValueChange: (_event, date) => {
+          if (date) {
+            updateItemDate(field, date);
+          }
+        },
+      });
+      return;
+    }
+
+    setDatePickerField(field);
+  };
+
+  const renderDateField = (field, placeholder) => {
+    const value = field === 'start' ? itemDateStart : itemDateEnd;
+    const dateConstraints = {
+      min: field === 'end' ? itemDateStart || undefined : undefined,
+      max: field === 'start' ? itemDateEnd || undefined : undefined,
+    };
+
+    if (Platform.OS === 'web') {
+      return React.createElement('input', {
+        type: 'date',
+        value,
+        ...dateConstraints,
+        'aria-label': placeholder,
+        onChange: (event) => updateItemDate(field, fromStoredDate(event.target.value)),
+        style: {
+          boxSizing: 'border-box',
+          width: '100%',
+          height: '50px',
+          marginBottom: '14px',
+          padding: '13px 14px',
+          border: '1px solid #E5E1EA',
+          borderRadius: '12px',
+          backgroundColor: '#FFFFFF',
+          color: '#24212B',
+          fontSize: '16px',
+        },
+      });
+    }
+
+    return (
+      <TouchableOpacity
+        style={styles.input}
+        onPress={() => openItemDatePicker(field)}
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${placeholder}: ${formatStoredDate(value)}` : placeholder}
+      >
+        <Text style={[styles.dateInputText, !value && styles.dateInputPlaceholder]}>
+          {value ? formatStoredDate(value) : placeholder}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  const updateFilterDate = (field, date) => {
+    const value = toStoredDate(date);
+    if (field === 'start') {
+      setFilterDateStart(value);
+      if (filterDateEnd && value > filterDateEnd) {
+        setFilterDateEnd('');
+      }
+      return;
+    }
+
+    setFilterDateEnd(value);
+  };
+
+  const openFilterDatePicker = (field) => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: fromStoredDate(field === 'start' ? filterDateStart : filterDateEnd),
+        mode: 'date',
+        minimumDate: field === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined,
+        maximumDate: field === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined,
+        onValueChange: (_event, date) => {
+          if (date) {
+            updateFilterDate(field, date);
+          }
+        },
+      });
+      return;
+    }
+
+    setFilterDatePickerField(field);
+  };
+
+  const renderFilterDateField = (field, placeholder) => {
+    const value = field === 'start' ? filterDateStart : filterDateEnd;
+    const dateConstraints = {
+      min: field === 'end' && filterDateStart ? filterDateStart : undefined,
+      max: field === 'start' && filterDateEnd ? filterDateEnd : undefined,
+    };
+
+    if (Platform.OS === 'web') {
+      return React.createElement('input', {
+        type: 'date',
+        value,
+        ...dateConstraints,
+        'aria-label': placeholder,
+        onChange: (event) => {
+          if (event.target.value) {
+            updateFilterDate(field, fromStoredDate(event.target.value));
+          }
+        },
+        style: {
+          boxSizing: 'border-box',
+          width: '100%',
+          height: '50px',
+          marginBottom: '10px',
+          padding: '13px 14px',
+          border: '1px solid #E5E1EA',
+          borderRadius: '12px',
+          backgroundColor: '#FFFFFF',
+          color: '#24212B',
+          fontSize: '16px',
+        },
+      });
+    }
+
+    return (
+      <TouchableOpacity
+        style={[styles.input, styles.dateFilterInput]}
+        onPress={() => openFilterDatePicker(field)}
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${placeholder}: ${formatStoredDate(value)}` : placeholder}
+      >
+        <Text style={[styles.dateInputText, !value && styles.dateInputPlaceholder]}>
+          {value ? formatStoredDate(value) : placeholder}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const handleAddItem = async () => {
     if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
       setStatus({ type: 'error', text: 'Preencha todos os campos.' });
+      return;
+    }
+
+    const eventDateStart = parseDateInput(itemDateStart);
+    const eventDateEnd = itemDateMode === 'period' && itemDateEnd.trim()
+      ? parseDateInput(itemDateEnd)
+      : null;
+    if (!eventDateStart || (itemDateMode === 'period' && (!itemDateEnd.trim() || !eventDateEnd))) {
+      setStatus({ type: 'error', text: 'Selecione datas válidas.' });
+      return;
+    }
+    if (eventDateEnd && eventDateEnd < eventDateStart) {
+      setStatus({ type: 'error', text: 'A data final não pode ser anterior à data inicial.' });
       return;
     }
 
@@ -726,6 +1034,8 @@ export default function App() {
         imageUrl: safeImageUrl,
         createdAt: new Date().toISOString(),
         foundAt: new Date().toISOString(),
+        eventDateStart,
+        eventDateEnd,
         userId: user ? user.uid : null,
       };
 
@@ -737,11 +1047,15 @@ export default function App() {
       setItemName('');
       setItemDescription('');
       setItemLocation('');
+      setItemDateStart('');
+      setItemDateEnd('');
+      setItemDateMode('single');
+      setDatePickerField(null);
       setItemCategory('');
       setShowCategoryOptions(false);
       setItemImage(null);
       setItemImageFile(null);
-      setActiveView(itemType === 'lost' ? 'lost' : 'found');
+      navigateTo(itemType === 'lost' ? 'lost' : 'found');
     } catch (error) {
       console.error(`[${uploadStage === 'image' ? 'IMAGE UPLOAD' : 'ITEM SAVE'} ERROR]`, error);
       const message = uploadStage === 'image'
@@ -872,7 +1186,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      setActiveView('lost');
+      navigateTo('lost');
       setStatus({ type: 'success', text: 'Sua conta foi excluída com sucesso.' });
       clearForm();
       setScreen('login');
@@ -891,19 +1205,33 @@ export default function App() {
     }
   };
 
-  const handleUpdateAccount = async () => {
-    const normalizedName = editProfileName.trim();
-    const passwordChanged = newPassword.length > 0;
+  const filteredItems = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    return foundItems.filter((item) => {
+      const matchesCategory = selectedCategory === 'Todas'
+        || normalizeItemCategory(item.category) === selectedCategory;
+      const itemDateStart = item.eventDateStart;
+      const itemDateEnd = item.eventDateEnd || itemDateStart;
+      const matchesDate = !hasDateFilter || (itemDateStart && (
+        filterDateMode === 'single'
+          ? itemDateStart <= filterDateStart && itemDateEnd >= filterDateStart
+          : itemDateEnd >= (filterDateStart || '0000-01-01')
+            && itemDateStart <= (filterDateEnd || '9999-12-31')
+      ));
+      const searchableText = `${item.name || ''} ${item.description || ''} ${item.location || ''} ${item.category || ''}`.toLocaleLowerCase();
+      return matchesCategory && matchesDate && searchableText.includes(normalizedQuery);
+    });
+  }, [foundItems, searchQuery, selectedCategory, hasDateFilter, filterDateMode, filterDateStart, filterDateEnd]);
 
-    if (!normalizedName) {
-      setStatus({ type: 'error', text: 'Informe seu nome.' });
-      return;
-    }
+  const filteredItemsByType = useMemo(() => ({
+    lost: filteredItems.filter((item) => (item.type || 'found') === 'lost'),
+    found: filteredItems.filter((item) => (item.type || 'found') === 'found'),
+  }), [filteredItems]);
 
-    if (passwordChanged && newPassword.length < 6) {
-      setStatus({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
-      return;
-    }
+  const myItemsOnly = useMemo(
+    () => filteredItems.filter((item) => item.userId === user?.uid),
+    [filteredItems, user?.uid],
+  );
 
     if (passwordChanged && !currentPassword) {
       setStatus({ type: 'error', text: 'Informe sua senha atual para alterá-la.' });
@@ -950,55 +1278,84 @@ export default function App() {
     }
   };
 
-  const renderItemList = (type) => {
-    const filteredItems = foundItems.filter((item) => (
-      type === 'recovered'
-        ? item.status === 'recovered'
-        : (item.type || 'found') === type && item.status !== 'recovered'
-    ));
-
-    if (!filteredItems.length) {
+  const renderItemList = useCallback((items, type, ownItemsOnly = false) => {
+    if (!items.length) {
       return (
-        <View style={styles.card}>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateMark}>◎</Text>
           <Text style={styles.cardTitle}>
-            {type === 'lost' ? 'Nenhum item perdido ainda' : type === 'recovered' ? 'Nenhum item recuperado ainda' : 'Nenhum item achado ainda'}
+            {searchQuery || selectedCategory !== 'Todas' || hasDateFilter
+              ? 'Nenhum resultado encontrado'
+              : ownItemsOnly
+                ? 'Você ainda não publicou nenhum item'
+                : type === 'lost' ? 'Nenhum item perdido por aqui' : 'Nenhum item achado por aqui'}
           </Text>
+          <Text style={styles.cardText}>Tente ajustar a busca ou confira novamente mais tarde.</Text>
         </View>
       );
     }
 
-    return filteredItems.map((item) => (
-      <TouchableOpacity
-        style={styles.card}
-        key={item.id}
-        onPress={() => {
-          setSelectedItem(item);
-          setItemComments([]);
-          setCommentText('');
-          setActiveView('itemDetail');
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={`Ver detalhes de ${item.name}`}
-        activeOpacity={0.85}
-      >
-        {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} /> : null}
-        <Text style={styles.cardTitle}>{item.name}</Text>
-        <Text style={styles.cardText}>{item.description}</Text>
-        <Text style={styles.cardText}>Local: {item.location}</Text>
-        <Text style={styles.cardText}>Categoria: {item.category}</Text>
-        <Text style={styles.cardText}>Tipo: {item.type === 'lost' ? 'Item perdido' : 'Item achado'}</Text>
-        {item.status === 'recovered' ? (
-          <>
-            <Text style={styles.recoveredTag}>RECUPERADO</Text>
-            <Text style={styles.cardText}>Recuperado em: {formatDateTime(item.recoveredAt)}</Text>
-            <Text style={styles.cardText}>
-              Recuperado por: {item.recoveredByName || 'Servidor'}{item.recoveredByEmail ? ` · ${item.recoveredByEmail}` : ''}
-            </Text>
-          </>
-        ) : null}
-      </TouchableOpacity>
-    ));
-  };
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.itemGrid}>
+        {items.map((item) => {
+          const itemIsLost = (item.type || 'found') === 'lost';
+          const itemDateLabel = item.eventDateStart
+            ? `${formatStoredDate(item.eventDateStart)}${item.eventDateEnd ? ` até ${formatStoredDate(item.eventDateEnd)}` : ''}`
+            : '';
+          return (
+            <TouchableOpacity
+              style={styles.itemCard}
+              key={item.id}
+              onPress={() => {
+                setSelectedItem(item);
+                setItemComments([]);
+                setCommentsError('');
+                setLoadedCommentsForItemId(null);
+                setCommentText('');
+                navigateTo('itemDetail');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Ver detalhes de ${item.name}, categoria ${normalizeItemCategory(item.category)}`}
+            >
+              {item.imageUrl
+                ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
+                : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
+              <View style={styles.itemCardContent}>
+                <View style={[styles.itemTypeBadge, itemIsLost ? styles.itemTypeBadgeLost : styles.itemTypeBadgeFound]}>
+                  <Text style={[styles.itemTypeBadgeText, itemIsLost ? styles.itemTypeBadgeTextLost : styles.itemTypeBadgeTextFound]}>
+                    {itemIsLost ? 'Perdido' : 'Achado'}
+                  </Text>
+                </View>
+                <View style={styles.itemCategoryBadge}>
+                  <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
+                    {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
+                  </Text>
+                </View>
+                <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.cardText} numberOfLines={2}>{item.description}</Text>
+                <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
+                {item.status === 'recovered' ? (
+                  <>
+                    <Text style={styles.recoveredTag}>RECUPERADO</Text>
+                    <Text style={styles.cardText}>Recuperado em: {formatDateTime(item.recoveredAt)}</Text>
+                    <Text style={styles.cardText}>
+                      Recuperado por: {item.recoveredByName || 'Servidor'}{item.recoveredByEmail ? ` · ${item.recoveredByEmail}` : ''}
+                    </Text>
+                  </>
+                ) : null}
+                {itemDateLabel ? <Text style={styles.itemDate} numberOfLines={1}>Data: {itemDateLabel}</Text> : null}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  }, [navigateTo, searchQuery, selectedCategory, hasDateFilter]);
+
 
   if (user) {
     return (
@@ -1015,24 +1372,152 @@ export default function App() {
                 onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
                 scrollEventThrottle={16}
               >
+            {(activeView === 'lost' || activeView === 'found') && (
+              <>
+                <Text style={styles.eyebrow}>ACHADOS & PERDIDOS</Text>
+                <Text style={styles.title}>{activeView === 'lost' ? 'Itens perdidos' : 'Itens achados'}</Text>
+                <View style={styles.searchBox}>
+                  <Text style={styles.searchMark}>⌕</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Buscar por nome, local..."
+                    placeholderTextColor="#8B8992"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    returnKeyType="search"
+                  />
+                  {searchQuery ? <TouchableOpacity onPress={() => setSearchQuery('')}><Text style={styles.clearSearch}>×</Text></TouchableOpacity> : null}
+                  <TouchableOpacity
+                    style={[styles.categoryFilterButton, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterButtonActive]}
+                    onPress={() => {
+                      setShowCategoryFilters((showing) => !showing);
+                      setFilterDatePickerField(null);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Abrir filtros"
+                    accessibilityState={{ expanded: showCategoryFilters, selected: selectedCategory !== 'Todas' || hasDateFilter }}
+                  >
+                    <View style={styles.categoryFilterIcon}>
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkWide, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkMiddle, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
+                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkNarrow, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
+                    </View>
+                  </TouchableOpacity>
+                </View>
+                {showCategoryFilters && (
+                  <ScrollView
+                    horizontal
+                    style={[
+                      styles.categoryFilterScroll,
+                      Platform.OS === 'web' && {
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#6336C8 #E8E4EC',
+                      },
+                    ]}
+                    showsHorizontalScrollIndicator
+                    contentContainerStyle={styles.categoryRow}
+                  >
+                    {categoryOptions.map((category) => {
+                      const categoryOption = ITEM_CATEGORIES.find((option) => option.label === category);
+                      return (
+                        <TouchableOpacity
+                          key={category}
+                          style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]}
+                          onPress={() => setSelectedCategory(category)}
+                        >
+                          <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>
+                            {categoryOption ? `${categoryOption.symbol} ` : ''}{category}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+                {showCategoryFilters && (
+                  <View style={styles.dateFilterPanel}>
+                    <View style={styles.dateFilterHeader}>
+                      <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
+                      {hasDateFilter ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setFilterDateStart('');
+                            setFilterDateEnd('');
+                            setFilterDateMode('single');
+                            setFilterDatePickerField(null);
+                          }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={styles.dateFilterClear}>Limpar</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <View style={styles.authModeRow} accessibilityRole="radiogroup">
+                      {[
+                        { key: 'single', label: 'Uma data' },
+                        { key: 'period', label: 'Período' },
+                      ].map((mode) => (
+                        <TouchableOpacity
+                          key={mode.key}
+                          style={[styles.authModeButton, filterDateMode === mode.key && styles.authModeButtonActive]}
+                          onPress={() => {
+                            setFilterDateMode(mode.key);
+                            setFilterDatePickerField(null);
+                            if (mode.key === 'single') {
+                              setFilterDateEnd('');
+                            }
+                          }}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: filterDateMode === mode.key }}
+                        >
+                          <Text style={[styles.authModeText, filterDateMode === mode.key && styles.authModeTextActive]}>
+                            {mode.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    {renderFilterDateField('start', filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
+                    {filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
+                    {Platform.OS === 'ios' && filterDatePickerField ? (
+                      <View style={styles.filterDatePickerPanel}>
+                        <DateTimePicker
+                          value={fromStoredDate(filterDatePickerField === 'start' ? filterDateStart : filterDateEnd)}
+                          mode="date"
+                          display="spinner"
+                          locale="pt-BR"
+                          minimumDate={filterDatePickerField === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined}
+                          maximumDate={filterDatePickerField === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined}
+                          onValueChange={(_event, date) => date && updateFilterDate(filterDatePickerField, date)}
+                        />
+                        <TouchableOpacity
+                          style={styles.filterDatePickerDone}
+                          onPress={() => setFilterDatePickerField(null)}
+                        >
+                          <Text style={styles.datePickerDoneText}>Concluir</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
+              </>
+            )}
 
             {activeView === 'lost' && (
               <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
-                <Text style={styles.listDescription}>
-                  São os itens que pessoas perderam no campus e registraram para alguém encontrá-lo.
-                </Text>
-                {renderItemList('lost')}
+                {renderItemList(filteredItemsByType.lost, 'lost')}
+
               </View>
             )}
 
             {activeView === 'found' && (
               <View>
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionHeadingTitle}>Achados recentemente</Text>
+                  <Text style={styles.resultCount}>{foundItems.filter((item) => (item.type || 'found') === 'found').length} itens</Text>
+                </View>
                 <Text style={styles.title}>Itens Achados</Text>
-                <Text style={styles.listDescription}>
-                  São os itens perdidos de alguém que outras pessoas encontraram no campus.
-                </Text>
-                {renderItemList('found')}
+                {renderItemList(filteredItemsByType.found, 'found')}
+
               </View>
             )}
 
@@ -1048,7 +1533,8 @@ export default function App() {
               <View>
                 <TouchableOpacity
                   style={styles.detailBackButton}
-                  onPress={() => setActiveView(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type === 'lost' ? 'lost' : 'found')}
+                  onPress={() => navigateTo(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type === 'lost' ? 'lost' : 'found')}
+
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
@@ -1072,7 +1558,9 @@ export default function App() {
                   <Text style={styles.detailLabel}>Local</Text>
                   <Text style={styles.detailValue}>{selectedItem.location}</Text>
                   <Text style={styles.detailLabel}>Categoria</Text>
-                  <Text style={styles.detailValue}>{selectedItem.category}</Text>
+                  <Text style={styles.detailValue}>
+                    {getCategoryOption(selectedItem.category).symbol} {normalizeItemCategory(selectedItem.category)}
+                  </Text>
                   {selectedItem.status === 'recovered' ? (
                     <>
                       <Text style={styles.detailLabel}>Recuperado em</Text>
@@ -1103,7 +1591,18 @@ export default function App() {
                         ) : null
                       ) : null}
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      <Text style={styles.detailLabel}>
+                        {selectedItem.type === 'lost' ? 'Data da perda' : 'Data do achado'}
+                      </Text>
+                      <Text style={styles.detailValue}>
+                        {formatStoredDate(selectedItem.eventDateStart)}
+                        {selectedItem.eventDateEnd ? ` até ${formatStoredDate(selectedItem.eventDateEnd)}` : ''}
+                      </Text>
+                    </>
+                  )}
+
                 </View>
                 {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && selectedItem.userId !== user.uid ? (
                   <TouchableOpacity
@@ -1216,8 +1715,11 @@ export default function App() {
             )}
 
             {activeView === 'profile' && (
-              <View>
-                <Text style={styles.title}>
+              <View style={styles.profileScreen}>
+                <Text style={[styles.title, styles.profilePageTitle]}>Meu perfil</Text>
+                <View style={styles.profileHero}>
+              <View style={styles.profileIdentity}>
+                <Text style={styles.profileTypeTitle}>
                   {getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}
                 </Text>
                 <View style={styles.profileImageContainer}>
@@ -1225,126 +1727,117 @@ export default function App() {
                     <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.changeImageText}>Toque na imagem para trocar</Text>
-                <Text style={styles.userText}>{profileName || user.displayName || user.email}</Text>
-                <View style={styles.profileSectionTabs}>
-                  <TouchableOpacity
-                    style={[styles.profileSectionTab, profileSection === 'account' && styles.profileSectionTabActive]}
-                    onPress={() => setProfileSection('account')}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: profileSection === 'account' }}
-                  >
-                    <Text style={[styles.profileSectionTabText, profileSection === 'account' && styles.profileSectionTabTextActive]}>
-                      Informações da conta
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.profileSectionTab, profileSection === 'commented' && styles.profileSectionTabActive]}
-                    onPress={() => setProfileSection('commented')}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: profileSection === 'commented' }}
-                  >
-                    <Text style={[styles.profileSectionTabText, profileSection === 'commented' && styles.profileSectionTabTextActive]}>
-                      Itens comentados
-                    </Text>
-                  </TouchableOpacity>
+                <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
+                <Text style={styles.profileEmail}>{user.email}</Text>
+                <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
+                  <Text style={styles.changeImageText}>Alterar foto do perfil</Text>
+                </TouchableOpacity>
                 </View>
+                </View>
+                <TouchableOpacity style={styles.profileAction} onPress={() => { setSelectedCategory('Todas'); setSearchQuery(''); navigateTo('myItems'); }}>
+                  <View><Text style={styles.profileActionTitle}>Meus itens</Text><Text style={styles.profileActionSubtitle}>Acompanhe o que você publicou</Text></View>
+                  <Text style={styles.actionArrow}>›</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}>
+                  <View><Text style={styles.profileActionTitle}>Configurações</Text><Text style={styles.profileActionSubtitle}>Conta e segurança</Text></View>
+                  <Text style={styles.actionArrow}>›</Text>
+                </TouchableOpacity>
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
-                {profileSection === 'account' ? (
-                  <>
+              </View>
+            )}
+
+            {activeView === 'myItems' && (
+              <View>
+                <TouchableOpacity onPress={() => navigateTo('profile')} style={styles.backButton}>
+                  <Text style={styles.backButtonText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Meus itens</Text>
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionHeadingTitle}>Suas publicações</Text>
+                  <Text style={styles.resultCount}>{foundItems.filter((item) => item.userId === user.uid).length} itens</Text>
+                </View>
+                <View style={styles.myItemsFilterRow}>
+                  {[
+                    { key: 'all', label: 'Todos' },
+                    { key: 'lost', label: 'Perdidos' },
+                    { key: 'found', label: 'Achados' },
+                  ].map((filter) => (
                     <TouchableOpacity
-                      style={styles.editAccountButton}
-                      onPress={() => {
-                        setEditProfileName(profileName || user.displayName || '');
-                        setCurrentPassword('');
-                        setNewPassword('');
-                        setIsEditingAccount((editing) => !editing);
-                      }}
+                      key={filter.key}
+                      style={[styles.myItemsFilter, myItemFilter === filter.key && styles.myItemsFilterActive]}
+                      onPress={() => setMyItemFilter(filter.key)}
                     >
-                      <Text style={styles.editAccountButtonText}>{isEditingAccount ? 'Cancelar edição' : 'Alterar informações da conta'}</Text>
+                      <Text style={[styles.myItemsFilterText, myItemFilter === filter.key && styles.myItemsFilterTextActive]}>{filter.label}</Text>
                     </TouchableOpacity>
-                    {isEditingAccount && (
-                  <View style={styles.accountEditForm}>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Nome"
-                      value={editProfileName}
-                      onChangeText={setEditProfileName}
-                      autoCapitalize="words"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Nova senha (opcional)"
-                      value={newPassword}
-                      onChangeText={setNewPassword}
-                      secureTextEntry
-                    />
-                    {newPassword.length > 0 && (
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Senha atual"
-                        value={currentPassword}
-                        onChangeText={setCurrentPassword}
-                        secureTextEntry
-                      />
-                    )}
-                    <TouchableOpacity
-                      style={[styles.buttonPrimary, isSavingAccount && styles.buttonDisabled]}
-                      onPress={handleUpdateAccount}
-                      disabled={isSavingAccount}
-                    >
-                      {isSavingAccount ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alterações</Text>}
-                    </TouchableOpacity>
-                  </View>
-                    )}
-                  </>
-                ) : (
-                  <View style={styles.commentedItemsSection}>
-                    <Text style={styles.commentedItemsTitle}>Itens em que você comentou</Text>
-                    {isLoadingCommentedItems ? <ActivityIndicator color="#0f766e" /> : null}
-                    {commentedItemsError ? <Text style={styles.errorText}>{commentedItemsError}</Text> : null}
-                    {!isLoadingCommentedItems && !commentedItemsError && !commentedItems.length ? (
-                      <Text style={styles.emptyComments}>Os itens que você comentar aparecerão aqui.</Text>
-                    ) : null}
-                    {commentedItems.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={styles.commentedItemRow}
-                        onPress={() => {
-                          setSelectedItem(item);
-                          setItemComments([]);
-                          setCommentText('');
-                          setActiveView('itemDetail');
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Abrir detalhes de ${item.name}`}
-                      >
-                        {item.imageUrl ? (
-                          <Image source={{ uri: item.imageUrl }} style={styles.commentedItemImage} resizeMode="cover" />
-                        ) : (
-                          <View style={styles.commentedItemImagePlaceholder} />
-                        )}
-                        <View style={styles.commentedItemInfo}>
-                          <Text style={styles.commentedItemName} numberOfLines={2}>{item.name}</Text>
-                          <Text style={styles.commentedItemMeta} numberOfLines={1}>
-                            {item.type === 'lost' ? 'Perdido' : 'Achado'} · {item.location}
-                          </Text>
-                        </View>
-                        <Text style={styles.commentedItemArrow}>›</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                  ))}
+                </View>
+                {renderItemList(
+                  myItemsOnly.filter((item) => myItemFilter === 'all' || (item.type || 'found') === myItemFilter),
+                  myItemFilter,
+                  true,
                 )}
-                <View style={styles.accountActions}>
-                  <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
-                    <Text style={styles.buttonText}>Sair</Text>
+              </View>
+            )}
+
+            {activeView === 'settings' && (
+              <View>
+                <TouchableOpacity onPress={() => navigateTo('profile')} style={styles.backButton}>
+                  <Text style={styles.backButtonText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.title}>Configurações</Text>
+                <View style={styles.settingsSection}>
+                  <Text style={styles.settingsLabel}>CONTA</Text>
+                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('name')}>
+                    <View><Text style={styles.settingsRowTitle}>Nome</Text><Text style={styles.settingsRowValue}>{profileName || user.displayName || 'Não informado'}</Text></View>
+                    <Text style={styles.settingsEditLabel}>Trocar</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
-                    <Text style={styles.buttonText}>Excluir conta</Text>
+                  <View style={styles.settingsDivider} />
+                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('email')}>
+                    <View><Text style={styles.settingsRowTitle}>E-mail</Text><Text style={styles.settingsRowValue}>{user.email}</Text></View>
+                    <Text style={styles.settingsEditLabel}>Trocar</Text>
+                  </TouchableOpacity>
+                  <View style={styles.settingsDivider} />
+                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('password')}>
+                    <View><Text style={styles.settingsRowTitle}>Senha</Text><Text style={styles.settingsRowValue}>Atualizar senha de acesso</Text></View>
+                    <Text style={styles.settingsEditLabel}>Trocar</Text>
                   </TouchableOpacity>
                 </View>
+                {editingProfileField ? (
+                  <View style={styles.profileEditForm}>
+                    <Text style={styles.sectionTitle}>
+                      {editingProfileField === 'name' ? 'Alterar nome' : editingProfileField === 'email' ? 'Alterar e-mail' : 'Alterar senha'}
+                    </Text>
+                    {editingProfileField === 'name' ? (
+                      <TextInput style={styles.input} placeholder="Seu nome" value={profileNameDraft} onChangeText={setProfileNameDraft} autoCapitalize="words" />
+                    ) : (
+                      <>
+                        {editingProfileField === 'email' ? (
+                          <TextInput style={styles.input} placeholder="Novo e-mail" value={profileEmailDraft} onChangeText={setProfileEmailDraft} keyboardType="email-address" autoCapitalize="none" />
+                        ) : (
+                          <TextInput style={styles.input} placeholder="Nova senha (mínimo 6 caracteres)" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
+                        )}
+                        <TextInput style={styles.input} placeholder="Senha atual" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
+                      </>
+                    )}
+                    <TouchableOpacity style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]} onPress={handleSaveProfileField} disabled={isSavingProfile}>
+                      {isSavingProfile ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alteração</Text>}
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setEditingProfileField('')}>
+                      <Text style={styles.cancelEditText}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
+                  <Text style={styles.buttonLogoutText}>Sair da conta</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
+                  <Text style={styles.buttonDeleteText}>Excluir conta</Text>
+                </TouchableOpacity>
+                {status.text ? (
+                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+                ) : null}
                 {confirmDelete && (
                   <View style={styles.confirmBox}>
                     <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
@@ -1364,10 +1857,62 @@ export default function App() {
 
             {activeView === 'addItem' && (
               <View>
+                  <TouchableOpacity
+                    style={styles.backButton}
+                    onPress={() => navigateTo(itemType === 'lost' ? 'lost' : 'found')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Voltar para os itens"
+                  >
+                    <Text style={styles.backButtonText}>‹</Text>
+                  </TouchableOpacity>
                   <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
                   <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
+                  <View style={styles.authModeRow} accessibilityRole="radiogroup">
+                    {[
+                      { key: 'single', label: 'Uma data' },
+                      { key: 'period', label: 'Período' },
+                    ].map((mode) => (
+                      <TouchableOpacity
+                        key={mode.key}
+                        style={[styles.authModeButton, itemDateMode === mode.key && styles.authModeButtonActive]}
+                        onPress={() => {
+                          setItemDateMode(mode.key);
+                          setDatePickerField(null);
+                          if (mode.key === 'single') {
+                            setItemDateEnd('');
+                          }
+                        }}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: itemDateMode === mode.key }}
+                      >
+                        <Text style={[styles.authModeText, itemDateMode === mode.key && styles.authModeTextActive]}>
+                          {mode.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {renderDateField('start', itemDateMode === 'period'
+                    ? 'Data inicial'
+                    : itemType === 'lost' ? 'Data em que perdeu' : 'Data em que encontrou')}
+                  {itemDateMode === 'period' && renderDateField('end', 'Data final')}
+                  {Platform.OS === 'ios' && datePickerField ? (
+                    <View style={styles.datePickerPanel}>
+                      <DateTimePicker
+                        value={fromStoredDate(datePickerField === 'start' ? itemDateStart : itemDateEnd)}
+                        mode="date"
+                        display="spinner"
+                        locale="pt-BR"
+                        minimumDate={datePickerField === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined}
+                        maximumDate={datePickerField === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined}
+                        onValueChange={(_event, date) => date && updateItemDate(datePickerField, date)}
+                      />
+                      <TouchableOpacity style={styles.datePickerDone} onPress={() => setDatePickerField(null)}>
+                        <Text style={styles.datePickerDoneText}>Concluir</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                   <TouchableOpacity
                     style={styles.categoryPicker}
                     onPress={() => setShowCategoryOptions((showing) => !showing)}
@@ -1375,24 +1920,24 @@ export default function App() {
                     accessibilityLabel={itemCategory || 'Selecionar categoria do item'}
                   >
                     <Text style={[styles.categoryPickerText, !itemCategory && styles.categoryPlaceholder]}>
-                      {itemCategory || 'Selecionar categoria'}
+                      {itemCategory ? `${getCategoryOption(itemCategory).symbol} ${itemCategory}` : 'Selecionar categoria'}
                     </Text>
                   </TouchableOpacity>
                   {showCategoryOptions && (
                     <View style={styles.categoryOptions}>
                       {ITEM_CATEGORIES.map((category) => (
                         <TouchableOpacity
-                          key={category}
-                          style={[styles.categoryOption, itemCategory === category && styles.categoryOptionSelected]}
+                          key={category.label}
+                          style={[styles.categoryOption, itemCategory === category.label && styles.categoryOptionSelected]}
                           onPress={() => {
-                            setItemCategory(category);
+                            setItemCategory(category.label);
                             setShowCategoryOptions(false);
                           }}
                           accessibilityRole="button"
-                          accessibilityState={{ selected: itemCategory === category }}
+                          accessibilityState={{ selected: itemCategory === category.label }}
                         >
-                          <Text style={[styles.categoryOptionText, itemCategory === category && styles.categoryOptionTextSelected]}>
-                            {category}
+                          <Text style={[styles.categoryOptionText, itemCategory === category.label && styles.categoryOptionTextSelected]}>
+                            {category.symbol} {category.label}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -1403,7 +1948,24 @@ export default function App() {
                     <Text style={styles.buttonText}>Selecionar Imagem</Text>
                   </TouchableOpacity>
 
-                  {itemImage ? <Image source={{ uri: itemImage }} style={styles.itemPreview} /> : null}
+                  {itemImage ? (
+                    <View style={styles.itemPreviewWrap}>
+                      <Image source={{ uri: itemImage }} style={styles.itemPreview} />
+                      <TouchableOpacity
+                        style={styles.removeImageButton}
+                        onPress={() => {
+                          setItemImage(null);
+                          setItemImageFile(null);
+                          setStatus({ type: 'success', text: 'Imagem removida. O item será salvo sem foto.' });
+                        }}
+                        disabled={isUploading}
+                        accessibilityRole="button"
+                        accessibilityLabel="Remover imagem selecionada"
+                      >
+                        <Text style={styles.removeImageText}>Remover imagem</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
 
                   <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handleAddItem} disabled={isUploading}>
                     {isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar</Text>}
@@ -1413,28 +1975,71 @@ export default function App() {
                     <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                   ) : null}
 
-                  <TouchableOpacity style={styles.tabButton} onPress={() => setActiveView(itemType === 'lost' ? 'lost' : 'found')}>
+                  <TouchableOpacity style={styles.tabButton} onPress={() => {
+                    setDatePickerField(null);
+                    navigateTo(itemType === 'lost' ? 'lost' : 'found');
+                  }}>
                     <Text style={styles.tabText}>Cancelar</Text>
                   </TouchableOpacity>
+              </View>
+            )}
+
+            {confirmDelete && activeView === 'settings' && (
+              <View style={styles.confirmBox}>
+                <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
+                <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
+                <View style={styles.confirmActions}>
+                  <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
+                    <Text style={styles.cancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
+                    <Text style={styles.buttonText}>Excluir</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
               </ScrollView>
               {(isItemListView || showScrollTop) && (
                 <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
-                  {(activeView === 'lost' || activeView === 'found') && (
-                    <TouchableOpacity
-                      style={styles.floatingAddButton}
-                      onPress={() => {
-                        setItemType(activeView);
-                        setActiveView('addItem');
-                      }}
-                      disabled={isUploading}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.floatingAddButtonText}>
-                        {activeView === 'lost' ? 'Cadastrar item perdido' : 'Cadastrar item achado'}
-                      </Text>
-                    </TouchableOpacity>
+                  {isItemListView && (
+                    <View style={styles.addMenuContainer}>
+                      {showAddMenu && (
+                        <View style={styles.addMenu}>
+                          <TouchableOpacity
+                            style={styles.addMenuOption}
+                            onPress={() => {
+                              setItemType('found');
+                              navigateTo('addItem');
+                            }}
+                            accessibilityRole="button"
+                          >
+                            <Text style={styles.addMenuOptionText}>Cadastrar achado</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.addMenuOption}
+                            onPress={() => {
+                              setItemType('lost');
+                              navigateTo('addItem');
+                            }}
+                            accessibilityRole="button"
+                          >
+                            <Text style={styles.addMenuOptionText}>Cadastrar perdido</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                      <TouchableOpacity
+                        style={styles.floatingAddButton}
+                        onPress={() => setShowAddMenu((showing) => !showing)}
+                        disabled={isUploading}
+                        accessibilityRole="button"
+                        accessibilityLabel={showAddMenu ? 'Fechar opções de cadastro' : 'Cadastrar item'}
+                        accessibilityState={{ expanded: showAddMenu }}
+                      >
+                        <Text style={styles.floatingAddButtonText}>{showAddMenu ? '×' : '+'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
                   )}
                   {showScrollTop && (
                     <TouchableOpacity
@@ -1450,31 +2055,55 @@ export default function App() {
               )}
               <View style={styles.bottomBar}>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, activeView === 'found' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('found')}
+                  style={[styles.bottomNavButton, activeNavigationView === 'found' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('found'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'found' }}
                 >
-                  <Text style={[styles.bottomNavText, activeView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, activeView === 'lost' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('lost')}
+                  style={[styles.bottomNavButton, activeNavigationView === 'lost' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('lost'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'lost' }}
                 >
-                  <Text style={[styles.bottomNavText, activeView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, activeView === 'recovered' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('recovered')}
+                  style={[styles.bottomNavButton, activeNavigationView === 'recovered' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('recovered'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'recovered' }}
                 >
-                  <Text style={[styles.bottomNavText, activeView === 'recovered' && styles.bottomNavTextActive]}>Recuperados</Text>
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'recovered' && styles.bottomNavTextActive]}>Recuperados</Text>
+
+                >
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, styles.profileNavButton, activeView === 'profile' && styles.bottomNavButtonActive]}
-                  onPress={() => setActiveView('profile')}
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('profile'); }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: activeNavigationView === 'profile' }}
                 >
-                  <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileAvatar} resizeMode="cover" />
-                  <Text style={[styles.bottomNavText, styles.profileNavText, activeView === 'profile' && styles.bottomNavTextActive]} numberOfLines={1}>
-                    {profileName || user.displayName || 'Perfil'}
-                  </Text>
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'profile' && styles.bottomNavTextActive]}>Perfil</Text>
+                </TouchableOpacity>
+
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
+                  onPress={openProfile}
+                  accessibilityRole="button"
+                  accessibilityLabel="Perfil"
+                  accessibilityState={{ selected: activeNavigationView === 'profile' }}
+                >
+                  <Image
+                    source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
+                    style={styles.profileAvatar}
+                    resizeMode="cover"
+                  />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1489,44 +2118,50 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-          <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-            <Text style={styles.title}>Achados e Perdidos</Text>
+          <ScrollView contentContainerStyle={styles.authContainer} keyboardShouldPersistTaps="handled">
+            <View style={styles.authContent}>
+              <Text style={styles.eyebrow}>COMUNIDADE LOCAL</Text>
+              <Text style={styles.authTitle}>Achados e Perdidos</Text>
+              <Text style={styles.authIntro}>Um jeito simples de reencontrar o que importa.</Text>
 
-            <View style={styles.tabRow}>
-              <TouchableOpacity style={[styles.tabButton, screen === 'login' && styles.tabButtonActive]} onPress={() => setScreen('login')}>
-                <Text style={[styles.tabText, screen === 'login' && styles.tabTextActive]}>Entrar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tabButton, screen === 'register' && styles.tabButtonActive]} onPress={() => setScreen('register')}>
-                <Text style={[styles.tabText, screen === 'register' && styles.tabTextActive]}>Cadastrar</Text>
-              </TouchableOpacity>
+              <View style={styles.authModeRow}>
+                <TouchableOpacity style={[styles.authModeButton, screen === 'login' && styles.authModeButtonActive]} onPress={() => setScreen('login')}>
+                  <Text style={[styles.authModeText, screen === 'login' && styles.authModeTextActive]}>Entrar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.authModeButton, screen === 'register' && styles.authModeButtonActive]} onPress={() => setScreen('register')}>
+                  <Text style={[styles.authModeText, screen === 'register' && styles.authModeTextActive]}>Criar conta</Text>
+                </TouchableOpacity>
+              </View>
+
+              {screen === 'login' ? (
+                <View style={styles.formBox}>
+                  <Text style={styles.sectionTitle}>Boas-vindas</Text>
+                  <Text style={styles.authFormIntro}>Entre na sua conta para continuar.</Text>
+                  <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
+                  <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
+                    <Text style={styles.buttonText}>Entrar</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.formBox}>
+                  <Text style={styles.sectionTitle}>Criar sua conta</Text>
+                  <Text style={styles.authFormIntro}>Leva só um instante para começar.</Text>
+                  <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+                  <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
+                  <TextInput style={styles.input} placeholder="Senha (mínimo 6 caracteres)" value={password} onChangeText={setPassword} secureTextEntry />
+                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
+                    <Text style={styles.buttonText}>Criar conta</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {status.text ? (
+                <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
+              ) : null}
             </View>
-
-            {screen === 'login' ? (
-              <View style={styles.formBox}>
-                <Text style={styles.sectionTitle}>Login</Text>
-                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
-                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
-                <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
-                  <Text style={styles.buttonText}>Entrar</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.formBox}>
-                <Text style={styles.sectionTitle}>Cadastro</Text>
-                <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
-                <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-                <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
-                <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
-                <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
-                  <Text style={styles.buttonText}>Cadastrar</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {status.text ? (
-              <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-            ) : null}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -1535,36 +2170,102 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#f4f7f5',
-  },
-  container: {
-    flexGrow: 1,
-    padding: 20,
-    backgroundColor: '#f4f7f5',
-  },
-  authContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#f4f7f5',
-  },
   appShell: {
     flex: 1,
-    backgroundColor: '#f4f7f5',
+    backgroundColor: '#F7F6FA',
   },
   screenScroll: {
     flex: 1,
   },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#F7F6FA',
+  },
+  container: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
+    backgroundColor: '#F7F6FA',
+  },
   containerWithFloatingActions: {
-    paddingBottom: 140,
+    paddingBottom: 104,
+  },
+  authContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 32,
+    backgroundColor: '#F7F6FA',
+  },
+  authContent: {
+    width: '100%',
+    maxWidth: 460,
+    alignSelf: 'center',
+  },
+  authTitle: {
+    color: '#24212B',
+    fontSize: 30,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  authIntro: {
+    color: '#77727F',
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  authFormIntro: {
+    color: '#77727F',
+    fontSize: 14,
+    marginTop: -10,
+    marginBottom: 18,
+  },
+  authModeRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    backgroundColor: '#EAE7EF',
+    borderRadius: 15,
+    padding: 4,
+    marginBottom: 16,
+  },
+  authModeButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+  },
+  authModeButtonActive: {
+    backgroundColor: '#6336C8',
+  },
+  authModeText: {
+    color: '#77727F',
+    fontWeight: '700',
+  },
+  authModeTextActive: {
+    color: '#FFFFFF',
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEE9F8',
+    marginBottom: 12,
+  },
+  backButtonText: {
+    color: '#5B2BBF',
+    fontSize: 25,
+    lineHeight: 28,
   },
   profileImageButton: {
     alignSelf: 'center',
     borderRadius: 72,
     borderWidth: 4,
-    borderColor: '#b7d8c9',
+    borderColor: '#E4DCF4',
     marginBottom: 10,
   },
   profileImageContainer: {
@@ -1577,8 +2278,14 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
   },
+  profileAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E8E2F1',
+  },
   changeImageText: {
-    color: '#0f766e',
+    color: '#6336C8',
     fontSize: 13,
     textAlign: 'center',
     marginBottom: 8,
@@ -1586,42 +2293,29 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: 22,
-    color: '#153b2e',
-  },
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: '#e2eee9',
-    borderRadius: 14,
-    padding: 5,
-    marginBottom: 20,
+    textAlign: 'left',
+    marginBottom: 18,
+    color: '#24212B',
   },
   tabButton: {
     flex: 1,
-    minHeight: 44,
-    paddingVertical: 11,
-    borderRadius: 10,
+    minHeight: 40,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tabButtonActive: {
-    backgroundColor: '#ffffff',
-  },
   tabText: {
-    color: '#527064',
-    fontWeight: '600',
+    color: '#77727F',
+    fontSize: 13,
+    fontWeight: '700',
     textAlign: 'center',
-  },
-  tabTextActive: {
-    color: '#153b2e',
   },
   formBox: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
     padding: 22,
     borderWidth: 1,
-    borderColor: '#d8e6df',
+    borderColor: '#E9E5EF',
     shadowColor: '#000',
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -1631,18 +2325,18 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     marginBottom: 18,
-    color: '#153b2e',
+    color: '#24212B',
   },
   input: {
-    backgroundColor: '#f8fbf9',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 13,
     marginBottom: 14,
     fontSize: 16,
-    color: '#153b2e',
+    color: '#24212B',
   },
   authHint: {
     marginTop: -8,
@@ -1697,28 +2391,30 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   buttonPrimary: {
-    backgroundColor: '#0f766e',
-    borderRadius: 12,
+    backgroundColor: '#6336C8',
+    borderRadius: 14,
     minHeight: 48,
     paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
-    marginBottom: 10,
+    marginTop: 4,
+    marginBottom: 18,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonLogout: {
-    backgroundColor: '#b45349',
-    borderRadius: 10,
-    minHeight: 38,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    minHeight: 48,
+    paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: '#E6E0F0',
   },
+  buttonDelete: {
   buttonDelete: {
     backgroundColor: '#b45349',
     borderRadius: 10,
@@ -1840,9 +2536,15 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     flexShrink: 0,
+
     borderRadius: 14,
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
     borderWidth: 1,
-    borderColor: '#b7d8c9',
+    borderColor: '#F2D5D2',
   },
   buttonText: {
     color: '#fff',
@@ -1851,228 +2553,19 @@ const styles = StyleSheet.create({
   },
   userText: {
     fontSize: 18,
-    color: '#14532d',
+    color: '#24212B',
     textAlign: 'center',
     fontWeight: '600',
     marginBottom: 20,
   },
-  profileSectionTabs: {
-    flexDirection: 'row',
-    padding: 4,
-    marginBottom: 16,
-    borderRadius: 10,
-    backgroundColor: '#e2eee9',
-  },
-  profileSectionTab: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 7,
-    borderRadius: 7,
-  },
-  profileSectionTabActive: {
-    backgroundColor: '#ffffff',
-  },
-  profileSectionTabText: {
-    color: '#527064',
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  profileSectionTabTextActive: {
-    color: '#153b2e',
-    fontWeight: '700',
-  },
-  commentedItemsSection: {
-    marginBottom: 10,
-  },
-  commentedItemsTitle: {
-    marginBottom: 8,
-    color: '#153b2e',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  commentedItemRow: {
-    minHeight: 82,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#d8e6df',
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
-  },
-  commentedItemImage: {
-    width: 58,
-    height: 58,
-    flexShrink: 0,
-    borderRadius: 7,
-    backgroundColor: '#e2eee9',
-  },
-  commentedItemImagePlaceholder: {
-    width: 58,
-    height: 58,
-    flexShrink: 0,
-    borderRadius: 7,
-    backgroundColor: '#e2eee9',
-  },
-  commentedItemInfo: {
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 12,
-  },
-  commentedItemName: {
-    color: '#153b2e',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  commentedItemMeta: {
-    marginTop: 5,
-    color: '#527064',
-    fontSize: 12,
-  },
-  commentedItemArrow: {
-    marginLeft: 8,
-    color: '#0f766e',
-    fontSize: 26,
-    fontWeight: '500',
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 18,
-    marginTop: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#d8e6df',
-    shadowColor: '#153b2e',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 1,
-  },
-  detailBackButton: {
-    minHeight: 42,
-    justifyContent: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 4,
-    marginBottom: 10,
-  },
-  detailBackText: {
-    color: '#0f766e',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  detailImage: {
-    width: '100%',
-    height: 300,
-    borderRadius: 14,
-    backgroundColor: '#e2eee9',
-  },
-  detailImagePlaceholder: {
-    width: '100%',
-    height: 220,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: '#e2eee9',
-  },
-  detailPlaceholderText: {
-    color: '#527064',
-    fontSize: 14,
-  },
-  detailInformation: {
-    paddingTop: 20,
-    paddingBottom: 22,
-  },
-  detailType: {
-    marginBottom: 7,
-    color: '#0f766e',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  detailTitle: {
-    marginBottom: 10,
-    color: '#153b2e',
-    fontSize: 26,
-    fontWeight: '800',
-  },
-  detailDescription: {
-    color: '#36584a',
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  detailDivider: {
-    height: 1,
-    marginVertical: 18,
-    backgroundColor: '#d8e6df',
-  },
-  detailLabel: {
-    marginTop: 9,
-    marginBottom: 3,
-    color: '#527064',
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  detailValue: {
-    color: '#153b2e',
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  commentsSection: {
-    paddingTop: 18,
-    borderTopWidth: 1,
-    borderTopColor: '#d8e6df',
-  },
-  commentsTitle: {
-    marginBottom: 16,
-    color: '#153b2e',
-    fontSize: 21,
-    fontWeight: '800',
-  },
-  emptyComments: {
-    marginBottom: 14,
-    color: '#527064',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  commentRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
   commentThread: {
     marginBottom: 18,
-  },
-  commentAvatar: {
-    width: 38,
-    height: 38,
-    flexShrink: 0,
-    marginRight: 10,
-    borderRadius: 19,
-    backgroundColor: '#e2eee9',
-  },
-  commentContent: {
-    flex: 1,
-    paddingTop: 1,
   },
   commentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
-  },
-  commentAuthor: {
-    marginBottom: 3,
-    color: '#153b2e',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  commentText: {
-    color: '#36584a',
-    fontSize: 14,
-    lineHeight: 21,
   },
   replyButton: {
     minHeight: 32,
@@ -2132,36 +2625,15 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     backgroundColor: '#e2eee9',
   },
-  commentInput: {
-    minHeight: 84,
-    marginTop: 4,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    borderWidth: 1,
-    borderColor: '#cbded4',
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
-    color: '#153b2e',
-    fontSize: 15,
-  },
-  commentSubmitButton: {
-    minHeight: 46,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-    marginBottom: 12,
-    borderRadius: 10,
-    backgroundColor: '#0f766e',
-  },
   cardTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#153b2e',
+    color: '#24212B',
     marginBottom: 8,
   },
   cardText: {
     fontSize: 14,
-    color: '#527064',
+    color: '#77727F',
     lineHeight: 21,
   },
   listDescription: {
@@ -2177,6 +2649,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 14,
   },
+
   detailBackButton: {
     alignSelf: 'flex-start',
     minHeight: 40,
@@ -2390,27 +2863,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   errorText: {
-    color: '#b45349',
+    color: '#B42318',
   },
   successText: {
-    color: '#0f766e',
+    color: '#26734D',
   },
   confirmBox: {
     backgroundColor: '#fff',
     borderRadius: 18,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#d8e6df',
+    borderColor: '#E9E5EF',
     marginTop: 12,
   },
   confirmTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#153b2e',
+    color: '#24212B',
     marginBottom: 8,
   },
   confirmText: {
-    color: '#527064',
+    color: '#77727F',
     marginBottom: 18,
   },
   confirmActions: {
@@ -2419,7 +2892,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#EEE9F8',
     borderRadius: 12,
     minHeight: 46,
     paddingVertical: 12,
@@ -2428,18 +2901,530 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   cancelButtonText: {
-    color: '#153b2e',
+    color: '#4A2B88',
     fontWeight: '700',
   },
   confirmDeleteButton: {
     flex: 1,
-    backgroundColor: '#b45349',
+    backgroundColor: '#B42318',
     borderRadius: 12,
     minHeight: 46,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
+  },
+  floatingActions: {
+    position: 'absolute',
+    right: 18,
+    bottom: 82,
+    alignItems: 'flex-end',
+    gap: 10,
+    zIndex: 1,
+  },
+  floatingActionsEnd: {
+    bottom: 82,
+  },
+  floatingAddButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    backgroundColor: '#6336C8',
+  },
+  floatingAddButtonText: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '500',
+    lineHeight: 32,
+  },
+  addMenuContainer: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  addMenu: {
+    minWidth: 176,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#E8E4EC',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    elevation: 4,
+  },
+  addMenuOption: {
+    minHeight: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  addMenuOptionText: {
+    color: '#24212B',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  scrollTopButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    elevation: 3,
+  },
+  scrollTopText: {
+    color: '#24212B',
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  bottomBar: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E8E4EC',
+    backgroundColor: '#FFFFFF',
+    zIndex: 2,
+  },
+  bottomNavButton: {
+    minWidth: 64,
+    minHeight: 54,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+  },
+  bottomNavButtonActive: {
+    backgroundColor: '#F0EBF8',
+  },
+  bottomNavText: {
+    color: '#77727F',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  bottomNavTextActive: {
+    color: '#6336C8',
+  },
+  eyebrow: {
+    color: '#7656B5',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 6,
+    letterSpacing: 1,
+  },
+  searchBox: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E7E2EC',
+    borderRadius: 15,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+  },
+  categoryFilterButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+    borderRadius: 9,
+  },
+  categoryFilterButtonActive: {
+    backgroundColor: '#F0EBF8',
+  },
+  dateFilterPanel: {
+    marginBottom: 14,
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E7E2EC',
+    borderRadius: 12,
+  },
+  dateFilterHeader: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  dateFilterTitle: {
+    color: '#24212B',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dateFilterClear: {
+    color: '#6336C8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dateFilterInput: {
+    minHeight: 50,
+    marginBottom: 10,
+  },
+  filterDatePickerPanel: {
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: '#F7F6FA',
+  },
+  filterDatePickerDone: {
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+    borderRadius: 8,
+    backgroundColor: '#6336C8',
+  },
+  categoryFilterIcon: {
+    alignItems: 'center',
+    gap: 3,
+  },
+  categoryFilterMark: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#77727F',
+  },
+  categoryFilterMarkWide: {
+    width: 16,
+  },
+  categoryFilterMarkMiddle: {
+    width: 11,
+  },
+  categoryFilterMarkNarrow: {
+    width: 6,
+  },
+  categoryFilterMarkActive: {
+    backgroundColor: '#6336C8',
+  },
+  searchMark: {
+    color: '#77727F',
+    fontSize: 25,
+    marginRight: 9,
+  },
+  searchInput: {
+    flex: 1,
+    minHeight: 50,
+    color: '#24212B',
+    fontSize: 15,
+  },
+  clearSearch: {
+    color: '#77727F',
+    fontSize: 24,
+    paddingHorizontal: 4,
+  },
+  categoryRow: {
+    height: 48,
+    flexGrow: 0,
+    alignItems: 'center',
+    gap: 8,
+  },
+  categoryFilterScroll: {
+    height: 58,
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  categoryChip: {
+    height: 36,
+    minHeight: 36,
+    flexShrink: 0,
+    paddingHorizontal: 15,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECE9F0',
+  },
+  categoryChipActive: {
+    backgroundColor: '#6336C8',
+  },
+  categoryChipText: {
+    color: '#68636F',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  categoryChipTextActive: {
+    color: '#FFFFFF',
+  },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sectionHeadingTitle: {
+    color: '#24212B',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  resultCount: {
+    color: '#89848F',
+    fontSize: 12,
+  },
+  itemGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  itemCard: {
+    width: '48.5%',
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E4EC',
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  itemImage: {
+    width: '100%',
+    height: 128,
+    backgroundColor: '#E5E3E8',
+  },
+  itemImagePlaceholder: {
+    width: '100%',
+    height: 128,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E5E3E8',
+  },
+  placeholderMark: {
+    color: '#77727F',
+    fontSize: 36,
+  },
+  itemCardContent: {
+    padding: 10,
+  },
+  itemTypeBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    marginBottom: 8,
+  },
+  itemTypeBadgeLost: {
+    backgroundColor: '#FFF0ED',
+  },
+  itemTypeBadgeFound: {
+    backgroundColor: '#EAF5EF',
+  },
+  itemTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  itemTypeBadgeTextLost: {
+    color: '#B84D36',
+  },
+  itemTypeBadgeTextFound: {
+    color: '#26734D',
+  },
+  itemCategoryBadge: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    marginBottom: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#F0EBF8',
+  },
+  itemCategoryBadgeText: {
+    color: '#6336C8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  itemLocation: {
+    color: '#7656B5',
+    fontSize: 11,
+    marginTop: 7,
+  },
+  itemDate: {
+    color: '#68636F',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  emptyState: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 28,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E9E5EF',
+  },
+  emptyStateMark: {
+    color: '#9B82CC',
+    fontSize: 38,
+    marginBottom: 8,
+  },
+  profileScreen: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    alignItems: 'center',
+  },
+  profileHero: {
+    width: '100%',
+    alignItems: 'center',
+    paddingTop: 20,
+    paddingBottom: 28,
+  },
+  profilePageTitle: {
+    width: '100%',
+    marginBottom: 0,
+    textAlign: 'center',
+  },
+  profileIdentity: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  profileTypeTitle: {
+    marginBottom: 16,
+    color: '#24212B',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  profileEmail: {
+    color: '#77727F',
+    fontSize: 14,
+    marginTop: 0,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  myItemsFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  myItemsFilter: {
+    minHeight: 38,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECE9F0',
+    borderRadius: 12,
+  },
+  myItemsFilterActive: {
+    backgroundColor: '#6336C8',
+  },
+  myItemsFilterText: {
+    color: '#68636F',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  myItemsFilterTextActive: {
+    color: '#FFFFFF',
+  },
+  profileAction: {
+    width: '100%',
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E8E3EF',
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  profileActionTitle: {
+    color: '#27232E',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  profileActionSubtitle: {
+    color: '#77727F',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  actionArrow: {
+    color: '#7656B5',
+    fontSize: 28,
+  },
+  settingsSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E3EF',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  settingsLabel: {
+    color: '#89848F',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 14,
+  },
+  settingsOption: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  settingsEditLabel: {
+    color: '#6336C8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  profileEditForm: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E3EF',
+    padding: 16,
+    marginTop: 14,
+  },
+  cancelEditText: {
+    color: '#77727F',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingVertical: 10,
+  },
+  settingsRowTitle: {
+    color: '#77727F',
+    fontSize: 12,
+  },
+  settingsRowValue: {
+    color: '#28242F',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  settingsDivider: {
+    height: 1,
+    backgroundColor: '#EEEAF2',
+    marginVertical: 8,
+  },
+  buttonLogoutText: {
+    color: '#6336C8',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  buttonDeleteText: {
+    color: '#B42318',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  itemPreviewWrap: {
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  removeImageButton: {
+    minHeight: 38,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF0ED',
+  },
+  removeImageText: {
+    color: '#B42318',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

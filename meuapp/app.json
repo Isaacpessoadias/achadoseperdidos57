@@ -4,7 +4,7 @@
     "slug": "meuapp",
     "version": "1.0.0",
     "plugins": [
-      "expo-status-bar"
+      "@react-native-community/datetimepicker"
     ]
   }
 }

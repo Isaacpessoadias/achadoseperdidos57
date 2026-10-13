@@ -5,6 +5,7 @@
   "dependencies": {
     "@dataconnect/generated": "file:src/dataconnect-generated",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "^9.1.0",
     "@react-navigation/bottom-tabs": "^7.19.2",
     "@react-navigation/native": "^7.4.1",
     "body-parser": "^2.3.0",
@@ -14,7 +15,7 @@
     "eas-cli": "^24.8.0",
     "expo": "~57.0.25",
     "expo-blob": "^57.0.2",
-    "expo-file-system": "~57.0.2",
+    "expo-file-system": "~57.0.7",
     "expo-image-picker": "~57.0.20",
     "expo-status-bar": "~57.0.1",
     "express": "^5.2.1",
@@ -31,7 +32,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "eslint ."
   },
   "private": true,
   "devDependencies": {
