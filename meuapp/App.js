@@ -149,6 +149,10 @@ const parseDateInput = (value) => {
 };
 
 const formatStoredDate = (value) => (value ? value.split('-').reverse().join('/') : 'Não informada');
+const formatItemTimestamp = (value) => {
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Não informada' : date.toLocaleString('pt-BR');
+};
 const toStoredDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const fromStoredDate = (value) => {
   if (!value) {
@@ -173,10 +177,17 @@ const getAccountType = (emailAddress) => {
   return null;
 };
 
+<<<<<<< Updated upstream
 const formatDateTime = (value) => {
   const date = value?.toDate?.() || (value ? new Date(value) : null);
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('pt-BR') : 'Horário indisponível';
 };
+=======
+const formatDisplayEmail = (emailAddress) => (emailAddress || '').replace(
+  /@xn--jaboato-2wa\.ifpe\.edu\.br$/i,
+  '@jaboatão.ifpe.edu.br',
+);
+>>>>>>> Stashed changes
 
 const getFriendlyAuthError = (error, action) => {
   const code = error?.code || '';
@@ -365,7 +376,11 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
+<<<<<<< Updated upstream
   const [activeView, setActiveView] = useState('found');
+=======
+  const [activeView, setActiveView] = useState('items');
+>>>>>>> Stashed changes
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [showCategoryFilters, setShowCategoryFilters] = useState(false);
@@ -374,7 +389,11 @@ export default function App() {
   const [filterDateEnd, setFilterDateEnd] = useState('');
   const [filterDatePickerField, setFilterDatePickerField] = useState(null);
   const [myItemFilter, setMyItemFilter] = useState('all');
+<<<<<<< Updated upstream
 
+=======
+  const [itemListFilter, setItemListFilter] = useState('lost');
+>>>>>>> Stashed changes
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [editingProfileField, setEditingProfileField] = useState('');
@@ -401,6 +420,9 @@ export default function App() {
   const [isLoadingComments, setIsLoadingComments] = useState(false);
 
   const [commentsError, setCommentsError] = useState('');
+  const [pickupName, setPickupName] = useState('');
+  const [pickupError, setPickupError] = useState('');
+  const [isRegisteringPickup, setIsRegisteringPickup] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [itemName, setItemName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -413,22 +435,22 @@ export default function App() {
   const [showCategoryOptions, setShowCategoryOptions] = useState(false);
   const [itemImage, setItemImage] = useState(null);
   const [itemImageFile, setItemImageFile] = useState(null);
-  const [itemType, setItemType] = useState('found');
+  const [itemType, setItemType] = useState(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
-  const [showAddMenu, setShowAddMenu] = useState(false);
   const scrollViewRef = useRef(null);
   const categoryOptions = useMemo(() => ['Todas', ...ITEM_CATEGORIES.map((option) => option.label)], []);
+<<<<<<< Updated upstream
   const isItemListView = activeView === 'lost' || activeView === 'found' || activeView === 'recovered';
+=======
+  const isItemListView = activeView === 'items';
+>>>>>>> Stashed changes
   const hasDateFilter = filterDateMode === 'single'
     ? Boolean(filterDateStart)
     : Boolean(filterDateStart || filterDateEnd);
   const activeNavigationView = ['profile', 'settings', 'myItems'].includes(activeView)
     ? 'profile'
-    : activeView === 'addItem'
-      ? itemType
-      : activeView === 'itemDetail'
-        ? selectedItem?.type || 'found'
-        : activeView;
+    : 'items';
+  const canManageSelectedItem = getAccountType(user?.email) === 'server';
   const isLoadingComments = activeView === 'itemDetail'
     && Boolean(selectedItem?.id)
     && loadedCommentsForItemId !== selectedItem.id
@@ -437,7 +459,6 @@ export default function App() {
   const navigateTo = useCallback((view) => {
     setActiveView(view);
     setShowScrollTop(false);
-    setShowAddMenu(false);
     setShowCategoryFilters(false);
     setFilterDatePickerField(null);
     if (view === 'itemDetail') {
@@ -517,10 +538,14 @@ export default function App() {
       }
 
       setUser(currentUser);
+<<<<<<< Updated upstream
       if (currentUser) {
         navigateTo('found');
       }
 
+=======
+      navigateTo('items');
+>>>>>>> Stashed changes
     });
 
     return unsubscribe;
@@ -554,9 +579,11 @@ export default function App() {
     }
 
     const loadUserData = async () => {
+      let currentProfile = {};
       try {
         const profileSnapshot = await getDoc(doc(db, 'profiles', user.uid));
         const profile = profileSnapshot.exists() ? profileSnapshot.data() : null;
+        currentProfile = profile || {};
 
         if (profile?.photoUrl) {
           setProfileImage(profile.photoUrl);
@@ -572,14 +599,37 @@ export default function App() {
       try {
         const itemsSnapshot = await getDocs(collection(db, 'items'));
         const items = itemsSnapshot.docs
-          .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
+          .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }));
+        const creatorIds = [...new Set(items
+          .filter((item) => item.userId && (!item.creatorName || !item.creatorEmail || !item.creatorPhotoUrl))
+          .map((item) => item.userId))];
+        const creatorProfiles = await Promise.all(creatorIds.map(async (creatorId) => {
+          try {
+            const creatorSnapshot = await getDoc(doc(db, 'profiles', creatorId));
+            return [creatorId, creatorSnapshot.exists() ? creatorSnapshot.data() : {}];
+          } catch {
+            return [creatorId, {}];
+          }
+        }));
+        const creatorProfilesById = new Map(creatorProfiles);
+        const itemsWithCreators = items
+          .map((item) => {
+            const profile = creatorProfilesById.get(item.userId)
+              || (item.userId === user.uid ? currentProfile : {});
+            return {
+              ...item,
+              creatorName: item.creatorName || profile.name || '',
+              creatorEmail: item.creatorEmail || profile.email || '',
+              creatorPhotoUrl: item.creatorPhotoUrl || profile.photoUrl || '',
+            };
+          })
           .sort((first, second) => {
             const firstDate = new Date(first.createdAt || first.foundAt || 0).getTime();
             const secondDate = new Date(second.createdAt || second.foundAt || 0).getTime();
             return secondDate - firstDate;
           });
 
-        setFoundItems(items);
+        setFoundItems(itemsWithCreators);
       } catch (error) {
         setFoundItems([]);
         setStatus({ type: 'error', text: getFirestoreError(error, 'carregar os itens achados') });
@@ -700,8 +750,12 @@ export default function App() {
       setUser(userCredential.user);
       setProfileName(normalizedName);
       setProfileImage('');
+<<<<<<< Updated upstream
       navigateTo('found');
 
+=======
+      navigateTo('items');
+>>>>>>> Stashed changes
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
     } catch (error) {
@@ -724,8 +778,12 @@ export default function App() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
+<<<<<<< Updated upstream
       navigateTo('found');
 
+=======
+      navigateTo('items');
+>>>>>>> Stashed changes
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
       clearForm();
     } catch (error) {
@@ -739,8 +797,12 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
+<<<<<<< Updated upstream
       navigateTo('found');
 
+=======
+      navigateTo('items');
+>>>>>>> Stashed changes
       setStatus({ type: 'success', text: 'Você saiu da conta com sucesso.' });
       clearForm();
       setScreen('login');
@@ -992,6 +1054,16 @@ export default function App() {
   };
 
   const handleAddItem = async () => {
+    if (itemType === 'found' && getAccountType(user?.email) !== 'server') {
+      setStatus({ type: 'error', text: 'Somente servidores podem cadastrar itens achados.' });
+      return;
+    }
+
+    if (!itemType) {
+      setStatus({ type: 'error', text: 'Selecione se o item está perdido ou achado.' });
+      return;
+    }
+
     if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
       setStatus({ type: 'error', text: 'Preencha todos os campos.' });
       return;
@@ -1034,6 +1106,13 @@ export default function App() {
         imageUrl: safeImageUrl,
         createdAt: new Date().toISOString(),
         foundAt: new Date().toISOString(),
+        ...(itemType === 'found' ? {
+          foundAtDaeeAt: new Date().toISOString(),
+          foundAtDaeeBy: user.uid,
+        } : {}),
+        creatorName: profileName || user.displayName || 'Usuário',
+        creatorEmail: user.email || '',
+        creatorPhotoUrl: profileImage || user.photoURL || '',
         eventDateStart,
         eventDateEnd,
         userId: user ? user.uid : null,
@@ -1055,7 +1134,8 @@ export default function App() {
       setShowCategoryOptions(false);
       setItemImage(null);
       setItemImageFile(null);
-      navigateTo(itemType === 'lost' ? 'lost' : 'found');
+      setItemListFilter(itemType);
+      navigateTo('items');
     } catch (error) {
       console.error(`[${uploadStage === 'image' ? 'IMAGE UPLOAD' : 'ITEM SAVE'} ERROR]`, error);
       const message = uploadStage === 'image'
@@ -1091,6 +1171,7 @@ export default function App() {
     }
   };
 
+<<<<<<< Updated upstream
   const handleReportItemFound = async () => {
     if (!selectedItem?.id || !selectedItem.userId || selectedItem.userId === user.uid || isSendingFoundNotice) {
       return;
@@ -1169,6 +1250,65 @@ export default function App() {
       setStatus({ type: 'error', text: getFirestoreError(error, 'marcar o item como recuperado') });
     } finally {
       setIsMarkingRecovered(false);
+=======
+  const handleMarkItemFound = async () => {
+    if (selectedItem?.type !== 'lost' || !canManageSelectedItem || isRegisteringPickup) {
+      return;
+    }
+
+    setIsRegisteringPickup(true);
+    setPickupError('');
+    const foundAtDaeeAt = new Date().toISOString();
+    const statusData = {
+      type: 'found',
+      foundAtDaeeAt: serverTimestamp(),
+      foundAtDaeeBy: user.uid,
+    };
+
+    try {
+      await updateDoc(doc(db, 'items', selectedItem.id), statusData);
+      const updatedItem = { ...selectedItem, ...statusData, foundAtDaeeAt };
+      setSelectedItem(updatedItem);
+      setFoundItems((items) => items.map((item) => (
+        item.id === selectedItem.id ? updatedItem : item
+      )));
+      setItemListFilter('found');
+    } catch (error) {
+      setPickupError(getFirestoreError(error, 'registrar a chegada ao Achados e Perdidos'));
+    } finally {
+      setIsRegisteringPickup(false);
+    }
+  };
+
+  const handleRegisterPickup = async () => {
+    const recipientName = pickupName.trim();
+    if (!recipientName || !selectedItem?.id || selectedItem.type !== 'found' || !canManageSelectedItem || isRegisteringPickup) {
+      return;
+    }
+
+    setIsRegisteringPickup(true);
+    setPickupError('');
+    const pickupData = {
+      type: 'recovered',
+      pickedUpBy: recipientName,
+      pickedUpAt: serverTimestamp(),
+      pickupRegisteredBy: user.uid,
+    };
+    const pickedUpAt = new Date().toISOString();
+
+    try {
+      await updateDoc(doc(db, 'items', selectedItem.id), pickupData);
+      const updatedItem = { ...selectedItem, ...pickupData, pickedUpAt };
+      setSelectedItem(updatedItem);
+      setFoundItems((items) => items.map((item) => (
+        item.id === selectedItem.id ? updatedItem : item
+      )));
+      setPickupName('');
+    } catch (error) {
+      setPickupError(getFirestoreError(error, 'registrar a retirada'));
+    } finally {
+      setIsRegisteringPickup(false);
+>>>>>>> Stashed changes
     }
   };
 
@@ -1186,7 +1326,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-      navigateTo('lost');
+      navigateTo('items');
       setStatus({ type: 'success', text: 'Sua conta foi excluída com sucesso.' });
       clearForm();
       setScreen('login');
@@ -1226,6 +1366,7 @@ export default function App() {
   const filteredItemsByType = useMemo(() => ({
     lost: filteredItems.filter((item) => (item.type || 'found') === 'lost'),
     found: filteredItems.filter((item) => (item.type || 'found') === 'found'),
+    recovered: filteredItems.filter((item) => item.type === 'recovered'),
   }), [filteredItems]);
 
   const myItemsOnly = useMemo(
@@ -1288,7 +1429,9 @@ export default function App() {
               ? 'Nenhum resultado encontrado'
               : ownItemsOnly
                 ? 'Você ainda não publicou nenhum item'
-                : type === 'lost' ? 'Nenhum item perdido por aqui' : 'Nenhum item achado por aqui'}
+                : type === 'lost'
+                  ? 'Nenhum item perdido por aqui'
+                  : type === 'recovered' ? 'Nenhum item recuperado por aqui' : 'Nenhum item achado por aqui'}
           </Text>
           <Text style={styles.cardText}>Tente ajustar a busca ou confira novamente mais tarde.</Text>
         </View>
@@ -1302,10 +1445,26 @@ export default function App() {
     return (
       <View style={styles.itemGrid}>
         {items.map((item) => {
-          const itemIsLost = (item.type || 'found') === 'lost';
+          const itemStatus = item.type || 'found';
+          const itemStatusLabel = {
+            lost: 'Perdido',
+            found: 'Achado',
+            recovered: 'Recuperado',
+          }[itemStatus] || 'Achado';
+          const itemStatusStyle = itemStatus === 'lost'
+            ? styles.itemTypeBadgeLost
+            : itemStatus === 'recovered' ? styles.itemTypeBadgeRecovered : styles.itemTypeBadgeFound;
+          const itemStatusTextStyle = itemStatus === 'lost'
+            ? styles.itemTypeBadgeTextLost
+            : itemStatus === 'recovered' ? styles.itemTypeBadgeTextRecovered : styles.itemTypeBadgeTextFound;
           const itemDateLabel = item.eventDateStart
             ? `${formatStoredDate(item.eventDateStart)}${item.eventDateEnd ? ` até ${formatStoredDate(item.eventDateEnd)}` : ''}`
             : '';
+          const itemStatusDetail = itemStatus === 'recovered'
+            ? `Retirado por ${item.pickedUpBy || 'não informado'} - ${formatItemTimestamp(item.pickedUpAt)}`
+            : itemStatus === 'found' && item.foundAtDaeeAt
+              ? `Na DAEE desde ${formatItemTimestamp(item.foundAtDaeeAt)}`
+              : '';
           return (
             <TouchableOpacity
               style={styles.itemCard}
@@ -1325,9 +1484,9 @@ export default function App() {
                 ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
                 : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
               <View style={styles.itemCardContent}>
-                <View style={[styles.itemTypeBadge, itemIsLost ? styles.itemTypeBadgeLost : styles.itemTypeBadgeFound]}>
-                  <Text style={[styles.itemTypeBadgeText, itemIsLost ? styles.itemTypeBadgeTextLost : styles.itemTypeBadgeTextFound]}>
-                    {itemIsLost ? 'Perdido' : 'Achado'}
+                <View style={[styles.itemTypeBadge, itemStatusStyle]}>
+                  <Text style={[styles.itemTypeBadgeText, itemStatusTextStyle]}>
+                    {itemStatusLabel}
                   </Text>
                 </View>
                 <View style={styles.itemCategoryBadge}>
@@ -1348,6 +1507,20 @@ export default function App() {
                   </>
                 ) : null}
                 {itemDateLabel ? <Text style={styles.itemDate} numberOfLines={1}>Data: {itemDateLabel}</Text> : null}
+                {itemStatusDetail ? <Text style={styles.itemDate} numberOfLines={2}>{itemStatusDetail}</Text> : null}
+                <View style={styles.itemCreatorRow}>
+                  <Image
+                    source={item.creatorPhotoUrl ? { uri: item.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+                    style={styles.itemCreatorAvatar}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.itemCreatorText}>
+                    <Text style={styles.itemCreatorName} numberOfLines={1}>{item.creatorName || 'Autor não informado'}</Text>
+                    <Text style={styles.itemCreatorEmail} numberOfLines={1}>
+                      {formatDisplayEmail(item.creatorEmail) || 'E-mail indisponível'}
+                    </Text>
+                  </View>
+                </View>
               </View>
             </TouchableOpacity>
           );
@@ -1372,10 +1545,29 @@ export default function App() {
                 onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
                 scrollEventThrottle={16}
               >
-            {(activeView === 'lost' || activeView === 'found') && (
+            {activeView === 'items' && (
               <>
                 <Text style={styles.eyebrow}>ACHADOS & PERDIDOS</Text>
-                <Text style={styles.title}>{activeView === 'lost' ? 'Itens perdidos' : 'Itens achados'}</Text>
+                <Text style={styles.title}>Itens</Text>
+                <View style={styles.myItemsFilterRow} accessibilityRole="radiogroup">
+                  {[
+                    { key: 'lost', label: 'Perdidos' },
+                    { key: 'found', label: 'Achados' },
+                    { key: 'recovered', label: 'Recuperados' },
+                  ].map((filter) => (
+                    <TouchableOpacity
+                      key={filter.key}
+                      style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]}
+                      onPress={() => setItemListFilter(filter.key)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: itemListFilter === filter.key }}
+                    >
+                      <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>
+                        {filter.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <View style={styles.searchBox}>
                   <Text style={styles.searchMark}>⌕</Text>
                   <TextInput
@@ -1501,6 +1693,7 @@ export default function App() {
               </>
             )}
 
+<<<<<<< Updated upstream
             {activeView === 'lost' && (
               <View>
                 <Text style={styles.title}>Itens Perdidos</Text>
@@ -1510,11 +1703,17 @@ export default function App() {
             )}
 
             {activeView === 'found' && (
+=======
+            {activeView === 'items' && (
+>>>>>>> Stashed changes
               <View>
                 <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionHeadingTitle}>Achados recentemente</Text>
-                  <Text style={styles.resultCount}>{foundItems.filter((item) => (item.type || 'found') === 'found').length} itens</Text>
+                  <Text style={styles.sectionHeadingTitle}>
+                    {itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}
+                  </Text>
+                  <Text style={styles.resultCount}>{filteredItemsByType[itemListFilter].length} itens</Text>
                 </View>
+<<<<<<< Updated upstream
                 <Text style={styles.title}>Itens Achados</Text>
                 {renderItemList(filteredItemsByType.found, 'found')}
 
@@ -1526,6 +1725,9 @@ export default function App() {
                 <Text style={styles.title}>Itens Recuperados</Text>
                 <Text style={styles.listDescription}>Lista dos itens que foram recuperados pelos seus donos</Text>
                 {renderItemList('recovered')}
+=======
+                {renderItemList(filteredItemsByType[itemListFilter], itemListFilter)}
+>>>>>>> Stashed changes
               </View>
             )}
 
@@ -1533,8 +1735,15 @@ export default function App() {
               <View>
                 <TouchableOpacity
                   style={styles.detailBackButton}
+<<<<<<< Updated upstream
                   onPress={() => navigateTo(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type === 'lost' ? 'lost' : 'found')}
 
+=======
+                  onPress={() => {
+                    setItemListFilter(selectedItem.type || 'found');
+                    navigateTo('items');
+                  }}
+>>>>>>> Stashed changes
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
@@ -1549,9 +1758,14 @@ export default function App() {
                 )}
                 <View style={styles.detailInformation}>
                   <Text style={styles.detailType}>
+<<<<<<< Updated upstream
                     {selectedItem.status === 'recovered' ? 'ITEM RECUPERADO' : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}
                   </Text>
                   {selectedItem.status === 'recovered' ? <Text style={styles.recoveredTag}>RECUPERADO</Text> : null}
+=======
+                    {selectedItem.type === 'lost' ? 'ITEM PERDIDO' : selectedItem.type === 'recovered' ? 'ITEM RECUPERADO' : 'ITEM ACHADO'}
+                  </Text>
+>>>>>>> Stashed changes
                   <Text style={styles.detailTitle}>{selectedItem.name}</Text>
                   <Text style={styles.detailDescription}>{selectedItem.description}</Text>
                   <View style={styles.detailDivider} />
@@ -1561,6 +1775,7 @@ export default function App() {
                   <Text style={styles.detailValue}>
                     {getCategoryOption(selectedItem.category).symbol} {normalizeItemCategory(selectedItem.category)}
                   </Text>
+<<<<<<< Updated upstream
                   {selectedItem.status === 'recovered' ? (
                     <>
                       <Text style={styles.detailLabel}>Recuperado em</Text>
@@ -1676,6 +1891,92 @@ export default function App() {
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
+=======
+                  <Text style={styles.detailLabel}>
+                    {selectedItem.type === 'lost' ? 'Data da perda' : 'Data da ocorrência'}
+                  </Text>
+                  <Text style={styles.detailValue}>
+                    {formatStoredDate(selectedItem.eventDateStart)}
+                    {selectedItem.eventDateEnd ? ` até ${formatStoredDate(selectedItem.eventDateEnd)}` : ''}
+                  </Text>
+                </View>
+                <View style={styles.creatorSection}>
+                  <Image
+                    source={selectedItem.creatorPhotoUrl ? { uri: selectedItem.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+                    style={styles.creatorAvatar}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.creatorText}>
+                    <Text style={styles.creatorLabel}>Cadastrado por</Text>
+                    <Text style={styles.creatorName}>{selectedItem.creatorName || 'Autor não informado'}</Text>
+                    <Text style={styles.creatorEmail}>
+                      {formatDisplayEmail(selectedItem.creatorEmail) || 'E-mail indisponível'}
+                    </Text>
+                  </View>
+                </View>
+                {selectedItem.type === 'lost' && (
+                  <View style={styles.pickupSection}>
+                    <Text style={styles.commentsTitle}>Achados e Perdidos</Text>
+                    {selectedItem.foundAtDaeeAt ? (
+                      <Text style={styles.detailValue}>Recebido em: {formatItemTimestamp(selectedItem.foundAtDaeeAt)}</Text>
+                    ) : canManageSelectedItem ? (
+                      <View>
+                        {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
+                        <TouchableOpacity
+                          style={[styles.commentSubmitButton, isRegisteringPickup && styles.buttonDisabled]}
+                          onPress={handleMarkItemFound}
+                          disabled={isRegisteringPickup}
+                          accessibilityRole="button"
+                        >
+                          {isRegisteringPickup
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={styles.buttonText}>Registrar como achado</Text>}
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Text style={styles.emptyComments}>Aguardando localização do item.</Text>
+                    )}
+                  </View>
+                )}
+                {selectedItem.type !== 'lost' && (
+                  <View style={styles.pickupSection}>
+                    <Text style={styles.commentsTitle}>
+                      {selectedItem.type === 'recovered' ? 'Devolvido ao dono' : 'Retirada na DAEE'}
+                    </Text>
+                    {selectedItem.type === 'recovered' ? (
+                      <View>
+                        <Text style={styles.detailValue}>Retirado por: {selectedItem.pickedUpBy}</Text>
+                        <Text style={styles.detailValue}>
+                          Data e hora: {formatItemTimestamp(selectedItem.pickedUpAt)}
+                        </Text>
+                      </View>
+                    ) : canManageSelectedItem ? (
+                      <View>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Nome de quem retirou"
+                          value={pickupName}
+                          onChangeText={setPickupName}
+                          maxLength={100}
+                        />
+                        {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
+                        <TouchableOpacity
+                          style={[styles.commentSubmitButton, (!pickupName.trim() || isRegisteringPickup) && styles.buttonDisabled]}
+                          onPress={handleRegisterPickup}
+                          disabled={!pickupName.trim() || isRegisteringPickup}
+                          accessibilityRole="button"
+                        >
+                          {isRegisteringPickup
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={styles.buttonText}>Registrar devolução ao dono</Text>}
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Text style={styles.emptyComments}>Aguardando retirada na DAEE.</Text>
+                    )}
+                  </View>
+                )}
+>>>>>>> Stashed changes
                 <View style={styles.commentsSection}>
                   <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
                   {commentsError ? <Text style={styles.errorText}>{commentsError}</Text> : null}
@@ -1728,7 +2029,7 @@ export default function App() {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
-                <Text style={styles.profileEmail}>{user.email}</Text>
+                <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
                 <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
                   <Text style={styles.changeImageText}>Alterar foto do perfil</Text>
                 </TouchableOpacity>
@@ -1763,6 +2064,7 @@ export default function App() {
                     { key: 'all', label: 'Todos' },
                     { key: 'lost', label: 'Perdidos' },
                     { key: 'found', label: 'Achados' },
+                    { key: 'recovered', label: 'Recuperados' },
                   ].map((filter) => (
                     <TouchableOpacity
                       key={filter.key}
@@ -1795,7 +2097,7 @@ export default function App() {
                   </TouchableOpacity>
                   <View style={styles.settingsDivider} />
                   <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('email')}>
-                    <View><Text style={styles.settingsRowTitle}>E-mail</Text><Text style={styles.settingsRowValue}>{user.email}</Text></View>
+                    <View><Text style={styles.settingsRowTitle}>E-mail</Text><Text style={styles.settingsRowValue}>{formatDisplayEmail(user.email)}</Text></View>
                     <Text style={styles.settingsEditLabel}>Trocar</Text>
                   </TouchableOpacity>
                   <View style={styles.settingsDivider} />
@@ -1859,13 +2161,36 @@ export default function App() {
               <View>
                   <TouchableOpacity
                     style={styles.backButton}
-                    onPress={() => navigateTo(itemType === 'lost' ? 'lost' : 'found')}
+                    onPress={() => {
+                      if (itemType) {
+                        setItemListFilter(itemType);
+                      }
+                      navigateTo('items');
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel="Voltar para os itens"
                   >
                     <Text style={styles.backButtonText}>‹</Text>
                   </TouchableOpacity>
-                  <Text style={styles.title}>{itemType === 'lost' ? 'Cadastrar Item Perdido' : 'Cadastrar Item Achado'}</Text>
+                  <Text style={styles.title}>Cadastrar item</Text>
+                  <View style={styles.authModeRow} accessibilityRole="radiogroup">
+                    {[
+                      { key: 'lost', label: 'Perdido' },
+                      ...(getAccountType(user?.email) === 'server' ? [{ key: 'found', label: 'Achado' }] : []),
+                    ].map((typeOption) => (
+                      <TouchableOpacity
+                        key={typeOption.key}
+                        style={[styles.authModeButton, itemType === typeOption.key && styles.authModeButtonActive]}
+                        onPress={() => setItemType(typeOption.key)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: itemType === typeOption.key }}
+                      >
+                        <Text style={[styles.authModeText, itemType === typeOption.key && styles.authModeTextActive]}>
+                          {typeOption.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                   <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
                   <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
                   <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
@@ -1895,7 +2220,7 @@ export default function App() {
                   </View>
                   {renderDateField('start', itemDateMode === 'period'
                     ? 'Data inicial'
-                    : itemType === 'lost' ? 'Data em que perdeu' : 'Data em que encontrou')}
+                    : itemType === 'lost' ? 'Data em que perdeu' : itemType === 'found' ? 'Data em que encontrou' : 'Data da ocorrência')}
                   {itemDateMode === 'period' && renderDateField('end', 'Data final')}
                   {Platform.OS === 'ios' && datePickerField ? (
                     <View style={styles.datePickerPanel}>
@@ -1977,7 +2302,10 @@ export default function App() {
 
                   <TouchableOpacity style={styles.tabButton} onPress={() => {
                     setDatePickerField(null);
-                    navigateTo(itemType === 'lost' ? 'lost' : 'found');
+                    if (itemType) {
+                      setItemListFilter(itemType);
+                    }
+                    navigateTo('items');
                   }}>
                     <Text style={styles.tabText}>Cancelar</Text>
                   </TouchableOpacity>
@@ -2003,39 +2331,18 @@ export default function App() {
                 <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
                   {isItemListView && (
                     <View style={styles.addMenuContainer}>
-                      {showAddMenu && (
-                        <View style={styles.addMenu}>
-                          <TouchableOpacity
-                            style={styles.addMenuOption}
-                            onPress={() => {
-                              setItemType('found');
-                              navigateTo('addItem');
-                            }}
-                            accessibilityRole="button"
-                          >
-                            <Text style={styles.addMenuOptionText}>Cadastrar achado</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.addMenuOption}
-                            onPress={() => {
-                              setItemType('lost');
-                              navigateTo('addItem');
-                            }}
-                            accessibilityRole="button"
-                          >
-                            <Text style={styles.addMenuOptionText}>Cadastrar perdido</Text>
-                          </TouchableOpacity>
-                        </View>
-                      )}
                       <TouchableOpacity
                         style={styles.floatingAddButton}
-                        onPress={() => setShowAddMenu((showing) => !showing)}
+                        onPress={() => {
+                          setItemType('lost');
+                          setPickupError('');
+                          navigateTo('addItem');
+                        }}
                         disabled={isUploading}
                         accessibilityRole="button"
-                        accessibilityLabel={showAddMenu ? 'Fechar opções de cadastro' : 'Cadastrar item'}
-                        accessibilityState={{ expanded: showAddMenu }}
+                        accessibilityLabel="Cadastrar item"
                       >
-                        <Text style={styles.floatingAddButtonText}>{showAddMenu ? '×' : '+'}</Text>
+                        <Text style={styles.floatingAddButtonText}>+</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -2055,20 +2362,12 @@ export default function App() {
               )}
               <View style={styles.bottomBar}>
                 <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'found' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); navigateTo('found'); }}
+                  style={[styles.bottomNavButton, activeNavigationView === 'items' && styles.bottomNavButtonActive]}
+                  onPress={() => { setSelectedCategory('Todas'); navigateTo('items'); }}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: activeNavigationView === 'found' }}
+                  accessibilityState={{ selected: activeNavigationView === 'items' }}
                 >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'lost' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); navigateTo('lost'); }}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: activeNavigationView === 'lost' }}
-                >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'lost' && styles.bottomNavTextActive]}>Perdidos</Text>
+                  <Text style={[styles.bottomNavText, activeNavigationView === 'items' && styles.bottomNavTextActive]}>Itens</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'recovered' && styles.bottomNavButtonActive]}
@@ -3195,6 +3494,70 @@ const styles = StyleSheet.create({
   itemCardContent: {
     padding: 10,
   },
+  itemCreatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#EEEAF2',
+  },
+  itemCreatorAvatar: {
+    width: 28,
+    height: 28,
+    marginRight: 7,
+    borderRadius: 14,
+    backgroundColor: '#E8E2F1',
+  },
+  itemCreatorText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  itemCreatorName: {
+    color: '#28242F',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  itemCreatorEmail: {
+    marginTop: 2,
+    color: '#77727F',
+    fontSize: 9,
+  },
+  creatorSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEAF2',
+  },
+  creatorAvatar: {
+    width: 48,
+    height: 48,
+    marginRight: 12,
+    borderRadius: 24,
+    backgroundColor: '#E8E2F1',
+  },
+  creatorText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  creatorLabel: {
+    color: '#89848F',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  creatorName: {
+    marginTop: 3,
+    color: '#28242F',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  creatorEmail: {
+    marginTop: 2,
+    color: '#77727F',
+    fontSize: 13,
+  },
   itemTypeBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
@@ -3208,6 +3571,9 @@ const styles = StyleSheet.create({
   itemTypeBadgeFound: {
     backgroundColor: '#EAF5EF',
   },
+  itemTypeBadgeRecovered: {
+    backgroundColor: '#E7F0F8',
+  },
   itemTypeBadgeText: {
     fontSize: 10,
     fontWeight: '800',
@@ -3217,6 +3583,9 @@ const styles = StyleSheet.create({
   },
   itemTypeBadgeTextFound: {
     color: '#26734D',
+  },
+  itemTypeBadgeTextRecovered: {
+    color: '#315B83',
   },
   itemCategoryBadge: {
     alignSelf: 'flex-start',
