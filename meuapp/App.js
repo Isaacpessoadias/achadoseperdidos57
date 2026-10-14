@@ -44,7 +44,6 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
   writeBatch,
 
 } from 'firebase/firestore';
@@ -177,17 +176,15 @@ const getAccountType = (emailAddress) => {
   return null;
 };
 
-<<<<<<< Updated upstream
 const formatDateTime = (value) => {
   const date = value?.toDate?.() || (value ? new Date(value) : null);
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('pt-BR') : 'Horário indisponível';
 };
-=======
+
 const formatDisplayEmail = (emailAddress) => (emailAddress || '').replace(
   /@xn--jaboato-2wa\.ifpe\.edu\.br$/i,
   '@jaboatão.ifpe.edu.br',
 );
->>>>>>> Stashed changes
 
 const getFriendlyAuthError = (error, action) => {
   const code = error?.code || '';
@@ -376,11 +373,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
-<<<<<<< Updated upstream
-  const [activeView, setActiveView] = useState('found');
-=======
   const [activeView, setActiveView] = useState('items');
->>>>>>> Stashed changes
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [showCategoryFilters, setShowCategoryFilters] = useState(false);
@@ -389,11 +382,7 @@ export default function App() {
   const [filterDateEnd, setFilterDateEnd] = useState('');
   const [filterDatePickerField, setFilterDatePickerField] = useState(null);
   const [myItemFilter, setMyItemFilter] = useState('all');
-<<<<<<< Updated upstream
-
-=======
   const [itemListFilter, setItemListFilter] = useState('lost');
->>>>>>> Stashed changes
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [editingProfileField, setEditingProfileField] = useState('');
@@ -416,11 +405,9 @@ export default function App() {
   const [recoveredPersonClass, setRecoveredPersonClass] = useState('');
   const [recoveredPersonEnrollment, setRecoveredPersonEnrollment] = useState('');
   const [recoveryPerson, setRecoveryPerson] = useState(null);
-  const [isLoadingRecoveryPerson, setIsLoadingRecoveryPerson] = useState(false);
-  const [isLoadingComments, setIsLoadingComments] = useState(false);
+  const [recoveryPersonItemId, setRecoveryPersonItemId] = useState(null);
 
   const [commentsError, setCommentsError] = useState('');
-  const [pickupName, setPickupName] = useState('');
   const [pickupError, setPickupError] = useState('');
   const [isRegisteringPickup, setIsRegisteringPickup] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -439,11 +426,7 @@ export default function App() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const scrollViewRef = useRef(null);
   const categoryOptions = useMemo(() => ['Todas', ...ITEM_CATEGORIES.map((option) => option.label)], []);
-<<<<<<< Updated upstream
-  const isItemListView = activeView === 'lost' || activeView === 'found' || activeView === 'recovered';
-=======
   const isItemListView = activeView === 'items';
->>>>>>> Stashed changes
   const hasDateFilter = filterDateMode === 'single'
     ? Boolean(filterDateStart)
     : Boolean(filterDateStart || filterDateEnd);
@@ -451,6 +434,12 @@ export default function App() {
     ? 'profile'
     : 'items';
   const canManageSelectedItem = getAccountType(user?.email) === 'server';
+  const canViewRecoveryPerson = getAccountType(user?.email) === 'server'
+    || selectedItem?.userId === user?.uid;
+  const isLoadingRecoveryPerson = activeView === 'itemDetail'
+    && selectedItem?.status === 'recovered'
+    && canViewRecoveryPerson
+    && recoveryPersonItemId !== selectedItem.id;
   const isLoadingComments = activeView === 'itemDetail'
     && Boolean(selectedItem?.id)
     && loadedCommentsForItemId !== selectedItem.id
@@ -497,36 +486,29 @@ export default function App() {
   }, [activeView, selectedItem]);
 
   useEffect(() => {
-    const canViewRecoveryPerson = getAccountType(user?.email) === 'server'
-      || selectedItem?.userId === user?.uid;
     if (activeView !== 'itemDetail' || selectedItem?.status !== 'recovered' || !canViewRecoveryPerson) {
-      setRecoveryPerson(null);
       return undefined;
     }
 
     let isActive = true;
-    setIsLoadingRecoveryPerson(true);
     getDoc(doc(db, 'items', selectedItem.id, 'recoveryDetails', 'claimant'))
       .then((snapshot) => {
         if (isActive) {
           setRecoveryPerson(snapshot.exists() ? snapshot.data() : null);
+          setRecoveryPersonItemId(selectedItem.id);
         }
       })
       .catch((error) => {
         if (isActive) {
+          setRecoveryPersonItemId(selectedItem.id);
           setStatus({ type: 'error', text: getFirestoreError(error, 'carregar os dados da recuperação') });
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setIsLoadingRecoveryPerson(false);
         }
       });
 
     return () => {
       isActive = false;
     };
-  }, [activeView, selectedItem?.id, selectedItem?.status, selectedItem?.userId, user]);
+  }, [activeView, selectedItem?.id, selectedItem?.status, canViewRecoveryPerson]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -538,25 +520,13 @@ export default function App() {
       }
 
       setUser(currentUser);
-<<<<<<< Updated upstream
       if (currentUser) {
-        navigateTo('found');
+        navigateTo('items');
       }
-
-=======
-      navigateTo('items');
->>>>>>> Stashed changes
     });
 
     return unsubscribe;
   }, [navigateTo]);
-
-  useEffect(() => {
-    setIsRecoveryFormVisible(false);
-    setRecoveredPersonName('');
-    setRecoveredPersonClass('');
-    setRecoveredPersonEnrollment('');
-  }, [selectedItem?.id]);
 
   useEffect(() => {
     const loginSuccessMessage = 'Login realizado com sucesso!';
@@ -750,12 +720,7 @@ export default function App() {
       setUser(userCredential.user);
       setProfileName(normalizedName);
       setProfileImage('');
-<<<<<<< Updated upstream
-      navigateTo('found');
-
-=======
       navigateTo('items');
->>>>>>> Stashed changes
       setStatus({ type: 'success', text: 'Cadastro realizado com sucesso! Bem-vindo(a).' });
       clearForm();
     } catch (error) {
@@ -778,12 +743,7 @@ export default function App() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       setUser(userCredential.user);
-<<<<<<< Updated upstream
-      navigateTo('found');
-
-=======
       navigateTo('items');
->>>>>>> Stashed changes
       setStatus({ type: 'success', text: 'Login realizado com sucesso!' });
       clearForm();
     } catch (error) {
@@ -797,12 +757,7 @@ export default function App() {
       setUser(null);
       setProfileImage(null);
       setProfileName('');
-<<<<<<< Updated upstream
-      navigateTo('found');
-
-=======
       navigateTo('items');
->>>>>>> Stashed changes
       setStatus({ type: 'success', text: 'Você saiu da conta com sucesso.' });
       clearForm();
       setScreen('login');
@@ -1171,7 +1126,6 @@ export default function App() {
     }
   };
 
-<<<<<<< Updated upstream
   const handleReportItemFound = async () => {
     if (!selectedItem?.id || !selectedItem.userId || selectedItem.userId === user.uid || isSendingFoundNotice) {
       return;
@@ -1201,7 +1155,11 @@ export default function App() {
   };
 
   const handleMarkRecovered = async () => {
-    if (!selectedItem?.id || getAccountType(user.email) !== 'server' || isMarkingRecovered) {
+    if (!selectedItem?.id
+      || selectedItem.type !== 'found'
+      || selectedItem.status === 'recovered'
+      || getAccountType(user.email) !== 'server'
+      || isMarkingRecovered) {
       return;
     }
 
@@ -1215,6 +1173,7 @@ export default function App() {
 
     setIsMarkingRecovered(true);
     const recoveredData = {
+      type: 'recovered',
       status: 'recovered',
       recoveredAt: serverTimestamp(),
       recoveredByUid: user.uid,
@@ -1241,6 +1200,7 @@ export default function App() {
       setFoundItems((currentItems) => currentItems.map((item) => (
         item.id === selectedItem.id ? updatedItem : item
       )));
+      setItemListFilter('recovered');
       setIsRecoveryFormVisible(false);
       setRecoveredPersonName('');
       setRecoveredPersonClass('');
@@ -1250,7 +1210,9 @@ export default function App() {
       setStatus({ type: 'error', text: getFirestoreError(error, 'marcar o item como recuperado') });
     } finally {
       setIsMarkingRecovered(false);
-=======
+    }
+  };
+
   const handleMarkItemFound = async () => {
     if (selectedItem?.type !== 'lost' || !canManageSelectedItem || isRegisteringPickup) {
       return;
@@ -1280,38 +1242,6 @@ export default function App() {
     }
   };
 
-  const handleRegisterPickup = async () => {
-    const recipientName = pickupName.trim();
-    if (!recipientName || !selectedItem?.id || selectedItem.type !== 'found' || !canManageSelectedItem || isRegisteringPickup) {
-      return;
-    }
-
-    setIsRegisteringPickup(true);
-    setPickupError('');
-    const pickupData = {
-      type: 'recovered',
-      pickedUpBy: recipientName,
-      pickedUpAt: serverTimestamp(),
-      pickupRegisteredBy: user.uid,
-    };
-    const pickedUpAt = new Date().toISOString();
-
-    try {
-      await updateDoc(doc(db, 'items', selectedItem.id), pickupData);
-      const updatedItem = { ...selectedItem, ...pickupData, pickedUpAt };
-      setSelectedItem(updatedItem);
-      setFoundItems((items) => items.map((item) => (
-        item.id === selectedItem.id ? updatedItem : item
-      )));
-      setPickupName('');
-    } catch (error) {
-      setPickupError(getFirestoreError(error, 'registrar a retirada'));
-    } finally {
-      setIsRegisteringPickup(false);
->>>>>>> Stashed changes
-    }
-  };
-
   const handleDeleteAccount = async () => {
     if (!auth.currentUser) {
       setStatus({ type: 'error', text: 'Nenhuma conta ativa para excluir.' });
@@ -1333,14 +1263,11 @@ export default function App() {
       setConfirmDelete(false);
     } catch (error) {
       const code = error?.code || '';
-
       if (code === 'auth/requires-recent-login') {
         setStatus({ type: 'error', text: 'Para excluir a conta, faça login novamente e tente outra vez.' });
-        setConfirmDelete(false);
-        return;
+      } else {
+        setStatus({ type: 'error', text: getFriendlyAuthError(error, 'excluir a conta') });
       }
-
-      setStatus({ type: 'error', text: getFriendlyAuthError(error, 'excluir a conta') });
       setConfirmDelete(false);
     }
   };
@@ -1366,58 +1293,13 @@ export default function App() {
   const filteredItemsByType = useMemo(() => ({
     lost: filteredItems.filter((item) => (item.type || 'found') === 'lost'),
     found: filteredItems.filter((item) => (item.type || 'found') === 'found'),
-    recovered: filteredItems.filter((item) => item.type === 'recovered'),
+    recovered: filteredItems.filter((item) => item.type === 'recovered' || item.status === 'recovered'),
   }), [filteredItems]);
 
   const myItemsOnly = useMemo(
     () => filteredItems.filter((item) => item.userId === user?.uid),
     [filteredItems, user?.uid],
   );
-
-    if (passwordChanged && !currentPassword) {
-      setStatus({ type: 'error', text: 'Informe sua senha atual para alterá-la.' });
-      return;
-    }
-
-    if (!auth.currentUser) {
-      setStatus({ type: 'error', text: 'Nenhuma conta ativa para atualizar.' });
-      return;
-    }
-
-    setIsSavingAccount(true);
-    try {
-      const currentUser = auth.currentUser;
-
-      if (passwordChanged) {
-        const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
-        await reauthenticateWithCredential(currentUser, credential);
-        await updatePassword(currentUser, newPassword);
-      }
-
-      await setDoc(
-        doc(db, 'profiles', currentUser.uid),
-        { name: normalizedName, email: currentUser.email || '' },
-        { merge: true },
-      );
-      await updateProfile(currentUser, { displayName: normalizedName });
-
-      setProfileName(normalizedName);
-      setEditProfileName(normalizedName);
-      setCurrentPassword('');
-      setNewPassword('');
-      setIsEditingAccount(false);
-      setStatus({ type: 'success', text: 'Informações da conta atualizadas com sucesso.' });
-    } catch (error) {
-      const message = error?.code === 'auth/wrong-password' || error?.code === 'auth/invalid-credential'
-        ? 'A senha atual está incorreta.'
-        : error?.code?.startsWith('auth/')
-          ? getFriendlyAuthError(error, 'atualizar as informações da conta')
-          : getFirestoreError(error, 'atualizar o perfil');
-      setStatus({ type: 'error', text: message });
-    } finally {
-      setIsSavingAccount(false);
-    }
-  };
 
   const renderItemList = useCallback((items, type, ownItemsOnly = false) => {
     if (!items.length) {
@@ -1438,14 +1320,10 @@ export default function App() {
       );
     }
 
-        </View>
-      );
-    }
-
     return (
       <View style={styles.itemGrid}>
         {items.map((item) => {
-          const itemStatus = item.type || 'found';
+          const itemStatus = item.status === 'recovered' ? 'recovered' : item.type || 'found';
           const itemStatusLabel = {
             lost: 'Perdido',
             found: 'Achado',
@@ -1475,6 +1353,10 @@ export default function App() {
                 setCommentsError('');
                 setLoadedCommentsForItemId(null);
                 setCommentText('');
+                setIsRecoveryFormVisible(false);
+                setRecoveredPersonName('');
+                setRecoveredPersonClass('');
+                setRecoveredPersonEnrollment('');
                 navigateTo('itemDetail');
               }}
               accessibilityRole="button"
@@ -1693,19 +1575,7 @@ export default function App() {
               </>
             )}
 
-<<<<<<< Updated upstream
-            {activeView === 'lost' && (
-              <View>
-                <Text style={styles.title}>Itens Perdidos</Text>
-                {renderItemList(filteredItemsByType.lost, 'lost')}
-
-              </View>
-            )}
-
-            {activeView === 'found' && (
-=======
             {activeView === 'items' && (
->>>>>>> Stashed changes
               <View>
                 <View style={styles.sectionHeading}>
                   <Text style={styles.sectionHeadingTitle}>
@@ -1713,21 +1583,7 @@ export default function App() {
                   </Text>
                   <Text style={styles.resultCount}>{filteredItemsByType[itemListFilter].length} itens</Text>
                 </View>
-<<<<<<< Updated upstream
-                <Text style={styles.title}>Itens Achados</Text>
-                {renderItemList(filteredItemsByType.found, 'found')}
-
-              </View>
-            )}
-
-            {activeView === 'recovered' && (
-              <View>
-                <Text style={styles.title}>Itens Recuperados</Text>
-                <Text style={styles.listDescription}>Lista dos itens que foram recuperados pelos seus donos</Text>
-                {renderItemList('recovered')}
-=======
                 {renderItemList(filteredItemsByType[itemListFilter], itemListFilter)}
->>>>>>> Stashed changes
               </View>
             )}
 
@@ -1735,15 +1591,10 @@ export default function App() {
               <View>
                 <TouchableOpacity
                   style={styles.detailBackButton}
-<<<<<<< Updated upstream
-                  onPress={() => navigateTo(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type === 'lost' ? 'lost' : 'found')}
-
-=======
                   onPress={() => {
-                    setItemListFilter(selectedItem.type || 'found');
+                    setItemListFilter(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type || 'found');
                     navigateTo('items');
                   }}
->>>>>>> Stashed changes
                   accessibilityRole="button"
                   accessibilityLabel="Voltar para a lista de itens"
                 >
@@ -1758,14 +1609,11 @@ export default function App() {
                 )}
                 <View style={styles.detailInformation}>
                   <Text style={styles.detailType}>
-<<<<<<< Updated upstream
-                    {selectedItem.status === 'recovered' ? 'ITEM RECUPERADO' : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}
+                    {selectedItem.status === 'recovered' || selectedItem.type === 'recovered'
+                      ? 'ITEM RECUPERADO'
+                      : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}
                   </Text>
                   {selectedItem.status === 'recovered' ? <Text style={styles.recoveredTag}>RECUPERADO</Text> : null}
-=======
-                    {selectedItem.type === 'lost' ? 'ITEM PERDIDO' : selectedItem.type === 'recovered' ? 'ITEM RECUPERADO' : 'ITEM ACHADO'}
-                  </Text>
->>>>>>> Stashed changes
                   <Text style={styles.detailTitle}>{selectedItem.name}</Text>
                   <Text style={styles.detailDescription}>{selectedItem.description}</Text>
                   <View style={styles.detailDivider} />
@@ -1775,7 +1623,6 @@ export default function App() {
                   <Text style={styles.detailValue}>
                     {getCategoryOption(selectedItem.category).symbol} {normalizeItemCategory(selectedItem.category)}
                   </Text>
-<<<<<<< Updated upstream
                   {selectedItem.status === 'recovered' ? (
                     <>
                       <Text style={styles.detailLabel}>Recuperado em</Text>
@@ -1794,7 +1641,7 @@ export default function App() {
                           ) : null}
                         </View>
                       </View>
-                      {isLoadingRecoveryPerson ? <ActivityIndicator color="#0f766e" /> : null}
+                      {isLoadingRecoveryPerson ? <ActivityIndicator color="#6336C8" /> : null}
                       {getAccountType(user.email) === 'server' || selectedItem.userId === user.uid ? (
                         recoveryPerson ? (
                           <View style={styles.recoveredPersonDetails}>
@@ -1819,6 +1666,35 @@ export default function App() {
                   )}
 
                 </View>
+                <View style={styles.creatorSection}>
+                  <Image
+                    source={selectedItem.creatorPhotoUrl ? { uri: selectedItem.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+                    style={styles.creatorAvatar}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.creatorText}>
+                    <Text style={styles.creatorLabel}>Cadastrado por</Text>
+                    <Text style={styles.creatorName}>{selectedItem.creatorName || 'Autor não informado'}</Text>
+                    <Text style={styles.creatorEmail}>
+                      {formatDisplayEmail(selectedItem.creatorEmail) || 'E-mail indisponível'}
+                    </Text>
+                  </View>
+                </View>
+                {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && getAccountType(user.email) === 'server' ? (
+                  <View>
+                    {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
+                    <TouchableOpacity
+                      style={[styles.foundButton, isRegisteringPickup && styles.buttonDisabled]}
+                      onPress={handleMarkItemFound}
+                      disabled={isRegisteringPickup}
+                      accessibilityRole="button"
+                    >
+                      {isRegisteringPickup
+                        ? <ActivityIndicator color="#fff" />
+                        : <Text style={styles.buttonText}>Registrar como achado</Text>}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
                 {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && selectedItem.userId !== user.uid ? (
                   <TouchableOpacity
                     style={[styles.foundButton, isSendingFoundNotice && styles.buttonDisabled]}
@@ -1829,7 +1705,7 @@ export default function App() {
                     {isSendingFoundNotice ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Achei</Text>}
                   </TouchableOpacity>
                 ) : null}
-                {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && getAccountType(user.email) === 'server' ? (
+                {selectedItem.type === 'found' && selectedItem.status !== 'recovered' && getAccountType(user.email) === 'server' ? (
                   isRecoveryFormVisible ? (
                     <View style={styles.recoveryForm}>
                       <Text style={styles.commentsTitle}>Dados de quem recuperou</Text>
@@ -1891,96 +1767,10 @@ export default function App() {
                 {status.text ? (
                   <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
                 ) : null}
-=======
-                  <Text style={styles.detailLabel}>
-                    {selectedItem.type === 'lost' ? 'Data da perda' : 'Data da ocorrência'}
-                  </Text>
-                  <Text style={styles.detailValue}>
-                    {formatStoredDate(selectedItem.eventDateStart)}
-                    {selectedItem.eventDateEnd ? ` até ${formatStoredDate(selectedItem.eventDateEnd)}` : ''}
-                  </Text>
-                </View>
-                <View style={styles.creatorSection}>
-                  <Image
-                    source={selectedItem.creatorPhotoUrl ? { uri: selectedItem.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
-                    style={styles.creatorAvatar}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.creatorText}>
-                    <Text style={styles.creatorLabel}>Cadastrado por</Text>
-                    <Text style={styles.creatorName}>{selectedItem.creatorName || 'Autor não informado'}</Text>
-                    <Text style={styles.creatorEmail}>
-                      {formatDisplayEmail(selectedItem.creatorEmail) || 'E-mail indisponível'}
-                    </Text>
-                  </View>
-                </View>
-                {selectedItem.type === 'lost' && (
-                  <View style={styles.pickupSection}>
-                    <Text style={styles.commentsTitle}>Achados e Perdidos</Text>
-                    {selectedItem.foundAtDaeeAt ? (
-                      <Text style={styles.detailValue}>Recebido em: {formatItemTimestamp(selectedItem.foundAtDaeeAt)}</Text>
-                    ) : canManageSelectedItem ? (
-                      <View>
-                        {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
-                        <TouchableOpacity
-                          style={[styles.commentSubmitButton, isRegisteringPickup && styles.buttonDisabled]}
-                          onPress={handleMarkItemFound}
-                          disabled={isRegisteringPickup}
-                          accessibilityRole="button"
-                        >
-                          {isRegisteringPickup
-                            ? <ActivityIndicator color="#fff" />
-                            : <Text style={styles.buttonText}>Registrar como achado</Text>}
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <Text style={styles.emptyComments}>Aguardando localização do item.</Text>
-                    )}
-                  </View>
-                )}
-                {selectedItem.type !== 'lost' && (
-                  <View style={styles.pickupSection}>
-                    <Text style={styles.commentsTitle}>
-                      {selectedItem.type === 'recovered' ? 'Devolvido ao dono' : 'Retirada na DAEE'}
-                    </Text>
-                    {selectedItem.type === 'recovered' ? (
-                      <View>
-                        <Text style={styles.detailValue}>Retirado por: {selectedItem.pickedUpBy}</Text>
-                        <Text style={styles.detailValue}>
-                          Data e hora: {formatItemTimestamp(selectedItem.pickedUpAt)}
-                        </Text>
-                      </View>
-                    ) : canManageSelectedItem ? (
-                      <View>
-                        <TextInput
-                          style={styles.input}
-                          placeholder="Nome de quem retirou"
-                          value={pickupName}
-                          onChangeText={setPickupName}
-                          maxLength={100}
-                        />
-                        {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
-                        <TouchableOpacity
-                          style={[styles.commentSubmitButton, (!pickupName.trim() || isRegisteringPickup) && styles.buttonDisabled]}
-                          onPress={handleRegisterPickup}
-                          disabled={!pickupName.trim() || isRegisteringPickup}
-                          accessibilityRole="button"
-                        >
-                          {isRegisteringPickup
-                            ? <ActivityIndicator color="#fff" />
-                            : <Text style={styles.buttonText}>Registrar devolução ao dono</Text>}
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <Text style={styles.emptyComments}>Aguardando retirada na DAEE.</Text>
-                    )}
-                  </View>
-                )}
->>>>>>> Stashed changes
                 <View style={styles.commentsSection}>
                   <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
                   {commentsError ? <Text style={styles.errorText}>{commentsError}</Text> : null}
-                  {isLoadingComments ? <ActivityIndicator color="#0f766e" /> : null}
+                  {isLoadingComments ? <ActivityIndicator color="#6336C8" /> : null}
                   <TextInput
                     style={styles.commentInput}
                     placeholder="Escreva um comentário..."
@@ -2346,8 +2136,6 @@ export default function App() {
                       </TouchableOpacity>
                     </View>
                   )}
-
-                  )}
                   {showScrollTop && (
                     <TouchableOpacity
                       style={styles.scrollTopButton}
@@ -2368,28 +2156,6 @@ export default function App() {
                   accessibilityState={{ selected: activeNavigationView === 'items' }}
                 >
                   <Text style={[styles.bottomNavText, activeNavigationView === 'items' && styles.bottomNavTextActive]}>Itens</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'recovered' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); navigateTo('recovered'); }}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: activeNavigationView === 'recovered' }}
-                >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'recovered' && styles.bottomNavTextActive]}>Recuperados</Text>
-
-                >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'found' && styles.bottomNavTextActive]}>Achados</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); navigateTo('profile'); }}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: activeNavigationView === 'profile' }}
-                >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'profile' && styles.bottomNavTextActive]}>Perfil</Text>
-                </TouchableOpacity>
-
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
@@ -2523,7 +2289,7 @@ const styles = StyleSheet.create({
   authModeRow: {
     minHeight: 52,
     flexDirection: 'row',
-    backgroundColor: '#EAE7EF',
+    backgroundColor: '#ECE9F0',
     borderRadius: 15,
     padding: 4,
     marginBottom: 16,
@@ -2552,11 +2318,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EEE9F8',
+    backgroundColor: '#F0EBF8',
     marginBottom: 12,
   },
   backButtonText: {
-    color: '#5B2BBF',
+    color: '#6336C8',
     fontSize: 25,
     lineHeight: 28,
   },
@@ -2564,7 +2330,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     borderRadius: 72,
     borderWidth: 4,
-    borderColor: '#E4DCF4',
+    borderColor: '#E5E1EA',
     marginBottom: 10,
   },
   profileImageContainer: {
@@ -2581,7 +2347,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#E8E2F1',
+    backgroundColor: '#F0EBF8',
   },
   changeImageText: {
     color: '#6336C8',
@@ -2640,7 +2406,7 @@ const styles = StyleSheet.create({
   authHint: {
     marginTop: -8,
     marginBottom: 14,
-    color: '#527064',
+    color: '#77727F',
     fontSize: 12,
     lineHeight: 17,
   },
@@ -2652,12 +2418,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: '#f8fbf9',
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     borderRadius: 12,
   },
   categoryPickerText: {
     fontSize: 16,
-    color: '#153b2e',
+    color: '#24212B',
   },
   categoryPlaceholder: {
     color: '#7b9187',
@@ -2667,7 +2433,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     borderRadius: 12,
   },
   categoryOption: {
@@ -2676,17 +2442,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5eee9',
+    borderBottomColor: '#EEEAF2',
   },
   categoryOptionSelected: {
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   categoryOptionText: {
     fontSize: 15,
-    color: '#527064',
+    color: '#77727F',
   },
   categoryOptionTextSelected: {
-    color: '#153b2e',
+    color: '#24212B',
     fontWeight: '700',
   },
   buttonPrimary: {
@@ -2711,9 +2477,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 24,
     borderWidth: 1,
-    borderColor: '#E6E0F0',
+    borderColor: '#E8E4EC',
   },
-  buttonDelete: {
   buttonDelete: {
     backgroundColor: '#b45349',
     borderRadius: 10,
@@ -2736,10 +2501,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     marginBottom: 8,
     borderRadius: 10,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   editAccountButtonText: {
-    color: '#153b2e',
+    color: '#24212B',
     fontWeight: '700',
     textAlign: 'center',
   },
@@ -2754,34 +2519,32 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
-    borderTopColor: '#d8e6df',
+    borderTopColor: '#E8E4EC',
   },
   floatingActions: {
     position: 'absolute',
-    left: 16,
     right: 16,
     bottom: 78,
-    flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
+    gap: 10,
   },
   floatingActionsEnd: {
     justifyContent: 'flex-end',
   },
   floatingAddButton: {
-    flex: 1,
-    minHeight: 48,
+    width: 52,
+    height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#0f766e',
+    borderRadius: 26,
+    backgroundColor: '#6336C8',
     elevation: 4,
   },
   floatingAddButtonText: {
     color: '#ffffff',
-    fontSize: 14,
+    fontSize: 28,
     fontWeight: '700',
+    lineHeight: 32,
     textAlign: 'center',
   },
   scrollTopButton: {
@@ -2791,12 +2554,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 19,
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     backgroundColor: '#ffffff',
     elevation: 4,
   },
   scrollTopText: {
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 23,
     fontWeight: '700',
     lineHeight: 28,
@@ -2813,16 +2576,16 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   bottomNavButtonActive: {
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   bottomNavText: {
-    color: '#527064',
+    color: '#77727F',
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
   },
   bottomNavTextActive: {
-    color: '#153b2e',
+    color: '#24212B',
   },
   profileNavButton: {
     flex: 1.3,
@@ -2830,20 +2593,6 @@ const styles = StyleSheet.create({
   profileNavText: {
     flexShrink: 1,
     textAlign: 'left',
-  },
-  profileAvatar: {
-    width: 28,
-    height: 28,
-    flexShrink: 0,
-
-    borderRadius: 14,
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#F2D5D2',
   },
   buttonText: {
     color: '#fff',
@@ -2872,7 +2621,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   replyButtonText: {
-    color: '#0f766e',
+    color: '#6336C8',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -2883,7 +2632,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   showRepliesText: {
-    color: '#0f766e',
+    color: '#6336C8',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2896,10 +2645,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 9,
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     borderRadius: 9,
     backgroundColor: '#ffffff',
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 14,
   },
   replySubmitButton: {
@@ -2908,7 +2657,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 7,
     borderRadius: 9,
-    backgroundColor: '#0f766e',
+    backgroundColor: '#6336C8',
   },
   replyRow: {
     flexDirection: 'row',
@@ -2922,7 +2671,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     marginRight: 9,
     borderRadius: 15,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   cardTitle: {
     fontSize: 18,
@@ -2938,7 +2687,7 @@ const styles = StyleSheet.create({
   listDescription: {
     marginTop: -8,
     marginBottom: 16,
-    color: '#527064',
+    color: '#77727F',
     fontSize: 14,
     lineHeight: 21,
   },
@@ -2957,7 +2706,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   detailBackText: {
-    color: '#0f766e',
+    color: '#6336C8',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -2965,7 +2714,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 290,
     borderRadius: 14,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   detailImagePlaceholder: {
     width: '100%',
@@ -2973,10 +2722,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 14,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   detailPlaceholderText: {
-    color: '#527064',
+    color: '#77727F',
     fontSize: 14,
   },
   detailInformation: {
@@ -2984,37 +2733,37 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   detailType: {
-    color: '#0f766e',
+    color: '#6336C8',
     fontSize: 12,
     fontWeight: '800',
   },
   detailTitle: {
     marginTop: 5,
     marginBottom: 10,
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 26,
     fontWeight: '800',
   },
   detailDescription: {
-    color: '#36594b',
+    color: '#77727F',
     fontSize: 16,
     lineHeight: 24,
   },
   detailDivider: {
     height: 1,
     marginVertical: 18,
-    backgroundColor: '#d8e6df',
+    backgroundColor: '#E8E4EC',
   },
   detailLabel: {
     marginTop: 10,
-    color: '#71847b',
+    color: '#77727F',
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   detailValue: {
     marginTop: 3,
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 16,
   },
   recoveredTag: {
@@ -3035,7 +2784,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 10,
     borderRadius: 10,
-    backgroundColor: '#0f766e',
+    backgroundColor: '#6336C8',
   },
   recoveredButton: {
     minHeight: 48,
@@ -3053,7 +2802,7 @@ const styles = StyleSheet.create({
   },
   recoveredPersonMeta: {
     marginTop: 4,
-    color: '#36584a',
+    color: '#77727F',
     fontSize: 15,
   },
   cancelRecoveryButton: {
@@ -3061,7 +2810,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   recoveredByRow: {
     flexDirection: 'row',
@@ -3073,30 +2822,30 @@ const styles = StyleSheet.create({
     height: 42,
     marginRight: 10,
     borderRadius: 21,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   recoveredByInfo: {
     flexShrink: 1,
   },
   recoveredByEmail: {
     marginTop: 2,
-    color: '#527064',
+    color: '#77727F',
     fontSize: 13,
   },
   commentsSection: {
     paddingTop: 20,
     borderTopWidth: 1,
-    borderTopColor: '#d8e6df',
+    borderTopColor: '#E8E4EC',
   },
   commentsTitle: {
     marginBottom: 16,
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 21,
     fontWeight: '800',
   },
   emptyComments: {
     marginBottom: 16,
-    color: '#71847b',
+    color: '#77727F',
     fontSize: 14,
     lineHeight: 21,
   },
@@ -3110,7 +2859,7 @@ const styles = StyleSheet.create({
     height: 38,
     marginRight: 11,
     borderRadius: 19,
-    backgroundColor: '#e2eee9',
+    backgroundColor: '#F0EBF8',
   },
   commentContent: {
     flex: 1,
@@ -3118,12 +2867,12 @@ const styles = StyleSheet.create({
   },
   commentAuthor: {
     marginBottom: 3,
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 14,
     fontWeight: '700',
   },
   commentText: {
-    color: '#36594b',
+    color: '#77727F',
     fontSize: 14,
     lineHeight: 21,
   },
@@ -3133,10 +2882,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#cbded4',
+    borderColor: '#E5E1EA',
     borderRadius: 12,
     backgroundColor: '#ffffff',
-    color: '#153b2e',
+    color: '#24212B',
     fontSize: 15,
   },
   commentSubmitButton: {
@@ -3145,7 +2894,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 10,
     borderRadius: 10,
-    backgroundColor: '#0f766e',
+    backgroundColor: '#6336C8',
   },
   itemPreview: {
     width: 112,
@@ -3191,7 +2940,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#EEE9F8',
+    backgroundColor: '#F0EBF8',
     borderRadius: 12,
     minHeight: 46,
     paddingVertical: 12,
@@ -3212,31 +2961,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
-  },
-  floatingActions: {
-    position: 'absolute',
-    right: 18,
-    bottom: 82,
-    alignItems: 'flex-end',
-    gap: 10,
-    zIndex: 1,
-  },
-  floatingActionsEnd: {
-    bottom: 82,
-  },
-  floatingAddButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 22,
-    backgroundColor: '#6336C8',
-  },
-  floatingAddButtonText: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '500',
-    lineHeight: 32,
   },
   addMenuContainer: {
     alignItems: 'flex-end',
@@ -3262,51 +2986,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  scrollTopButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    elevation: 3,
-  },
-  scrollTopText: {
-    color: '#24212B',
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  bottomBar: {
-    minHeight: 64,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E8E4EC',
-    backgroundColor: '#FFFFFF',
-    zIndex: 2,
-  },
-  bottomNavButton: {
-    minWidth: 64,
-    minHeight: 54,
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-  },
-  bottomNavButtonActive: {
-    backgroundColor: '#F0EBF8',
-  },
-  bottomNavText: {
-    color: '#77727F',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  bottomNavTextActive: {
-    color: '#6336C8',
-  },
   eyebrow: {
-    color: '#7656B5',
+    color: '#6336C8',
     fontSize: 11,
     fontWeight: '800',
     marginBottom: 6,
@@ -3332,7 +3013,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   categoryFilterButtonActive: {
-    backgroundColor: '#F0EBF8',
+    backgroundColor: '#ECE9F0',
   },
   dateFilterPanel: {
     marginBottom: 14,
@@ -3475,14 +3156,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 12,
   },
-  itemImage: {
-    width: '100%',
-    height: 128,
-    backgroundColor: '#E5E3E8',
-  },
   itemImagePlaceholder: {
     width: '100%',
-    height: 128,
+    height: 180,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#E5E3E8',
@@ -3507,7 +3183,7 @@ const styles = StyleSheet.create({
     height: 28,
     marginRight: 7,
     borderRadius: 14,
-    backgroundColor: '#E8E2F1',
+    backgroundColor: '#F0EBF8',
   },
   itemCreatorText: {
     flex: 1,
@@ -3535,7 +3211,7 @@ const styles = StyleSheet.create({
     height: 48,
     marginRight: 12,
     borderRadius: 24,
-    backgroundColor: '#E8E2F1',
+    backgroundColor: '#F0EBF8',
   },
   creatorText: {
     flex: 1,
@@ -3594,7 +3270,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 6,
-    backgroundColor: '#F0EBF8',
+    backgroundColor: '#ECE9F0',
   },
   itemCategoryBadgeText: {
     color: '#6336C8',
@@ -3602,7 +3278,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   itemLocation: {
-    color: '#7656B5',
+    color: '#6336C8',
     fontSize: 11,
     marginTop: 7,
   },
@@ -3621,7 +3297,7 @@ const styles = StyleSheet.create({
     borderColor: '#E9E5EF',
   },
   emptyStateMark: {
-    color: '#9B82CC',
+    color: '#77727F',
     fontSize: 38,
     marginBottom: 8,
   },
@@ -3694,7 +3370,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E8E3EF',
+    borderColor: '#E8E4EC',
     borderRadius: 14,
     paddingHorizontal: 20,
     marginBottom: 12,
@@ -3710,14 +3386,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   actionArrow: {
-    color: '#7656B5',
+    color: '#6336C8',
     fontSize: 28,
   },
   settingsSection: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E8E3EF',
+    borderColor: '#E8E4EC',
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
@@ -3743,7 +3419,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E8E3EF',
+    borderColor: '#E8E4EC',
     padding: 16,
     marginTop: 14,
   },
