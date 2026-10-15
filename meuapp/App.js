@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import DateTimePicker from '@expo/ui/community/datetime-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,20 +32,20 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import {
-  addDoc,
-  arrayUnion,
+  getFirestore,
   collection,
+  addDoc,
   deleteDoc,
   doc,
   getDoc,
   getDocs,
-  getFirestore,
-  onSnapshot,
-  serverTimestamp,
   setDoc,
   updateDoc,
   writeBatch,
-
+  arrayUnion,
+  onSnapshot,
+  serverTimestamp,
+  Timestamp,
 } from 'firebase/firestore';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -151,6 +151,24 @@ const formatStoredDate = (value) => (value ? value.split('-').reverse().join('/'
 const formatItemTimestamp = (value) => {
   const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
   return Number.isNaN(date.getTime()) ? 'Não informada' : date.toLocaleString('pt-BR');
+};
+
+// Helper: returns true if the item is a lost item and its creation date is older than 60 days.
+const isOldLost = (createdAt) => {
+  if (!createdAt) return false;
+  let date;
+  if (typeof createdAt?.toDate === 'function') {
+    date = createdAt.toDate();
+  } else if (typeof createdAt === 'string' || createdAt instanceof Date) {
+    date = new Date(createdAt);
+  } else {
+    return false;
+  }
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  const diffMs = now - date;
+  const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+  return diffMs > SIXTY_DAYS_MS;
 };
 const toStoredDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const fromStoredDate = (value) => {
@@ -287,7 +305,9 @@ const CommentItem = React.memo(function CommentItem({ comment, itemId, user, pro
       setIsReplying(false);
       setShowReplies(true);
     } catch (error) {
-      setReplyError(getFirestoreError(error, 'enviar a resposta'));
+      // Show raw error for debugging
+      const detailed = typeof error?.message === 'string' ? error.message : JSON.stringify(error);
+      setReplyError(detailed);
     } finally {
       setIsSendingReply(false);
     }
@@ -381,6 +401,7 @@ export default function App() {
   const [filterDateStart, setFilterDateStart] = useState('');
   const [filterDateEnd, setFilterDateEnd] = useState('');
   const [filterDatePickerField, setFilterDatePickerField] = useState(null);
+  const [filterDateDraft, setFilterDateDraft] = useState(new Date());
   const [myItemFilter, setMyItemFilter] = useState('all');
   const [itemListFilter, setItemListFilter] = useState('lost');
   const [profileImage, setProfileImage] = useState(null);
@@ -399,6 +420,8 @@ export default function App() {
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [isSendingFoundNotice, setIsSendingFoundNotice] = useState(false);
+  const [reportedFoundItemIds, setReportedFoundItemIds] = useState(() => new Set());
+  const foundNoticeInFlightRef = useRef(new Set());
   const [isMarkingRecovered, setIsMarkingRecovered] = useState(false);
   const [isRecoveryFormVisible, setIsRecoveryFormVisible] = useState(false);
   const [recoveredPersonName, setRecoveredPersonName] = useState('');
@@ -418,6 +441,7 @@ export default function App() {
   const [itemDateEnd, setItemDateEnd] = useState('');
   const [itemDateMode, setItemDateMode] = useState('single');
   const [datePickerField, setDatePickerField] = useState(null);
+  const [itemDateDraft, setItemDateDraft] = useState(new Date());
   const [itemCategory, setItemCategory] = useState('');
   const [showCategoryOptions, setShowCategoryOptions] = useState(false);
   const [itemImage, setItemImage] = useState(null);
@@ -465,12 +489,30 @@ export default function App() {
     const unsubscribe = onSnapshot(
       collection(db, 'items', selectedItem.id, 'comments'),
       (snapshot) => {
+        // Convert each comment document to a plain object and sort newest first.
         const comments = snapshot.docs
           .map((commentSnapshot) => ({ id: commentSnapshot.id, ...commentSnapshot.data() }))
-          .sort((first, second) => {
-            const firstDate = first.createdAt?.toMillis?.() || 0;
-            const secondDate = second.createdAt?.toMillis?.() || 0;
-            return firstDate - secondDate;
+          .sort((a, b) => {
+            // Helper to extract a comparable timestamp (ms since epoch).
+            const ts = (item) => {
+              if (!item?.createdAt) return 0;
+              // Firestore Timestamp object
+              if (typeof item.createdAt?.toMillis === 'function') {
+                return item.createdAt.toMillis();
+              }
+              // ISO string or other string representation
+              if (typeof item.createdAt === 'string') {
+                const ms = Date.parse(item.createdAt);
+                return Number.isNaN(ms) ? 0 : ms;
+              }
+              // Date instance
+              if (item.createdAt instanceof Date) {
+                return item.createdAt.getTime();
+              }
+              return 0;
+            };
+            // newest first -> larger timestamp first
+            return ts(b) - ts(a);
           });
 
         setItemComments(comments);
@@ -868,21 +910,7 @@ export default function App() {
   };
 
   const openItemDatePicker = (field) => {
-    if (Platform.OS === 'android') {
-      DateTimePickerAndroid.open({
-        value: fromStoredDate(field === 'start' ? itemDateStart : itemDateEnd),
-        mode: 'date',
-        minimumDate: field === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined,
-        maximumDate: field === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined,
-        onValueChange: (_event, date) => {
-          if (date) {
-            updateItemDate(field, date);
-          }
-        },
-      });
-      return;
-    }
-
+    setItemDateDraft(fromStoredDate(field === 'start' ? itemDateStart : itemDateEnd));
     setDatePickerField(field);
   };
 
@@ -943,21 +971,7 @@ export default function App() {
   };
 
   const openFilterDatePicker = (field) => {
-    if (Platform.OS === 'android') {
-      DateTimePickerAndroid.open({
-        value: fromStoredDate(field === 'start' ? filterDateStart : filterDateEnd),
-        mode: 'date',
-        minimumDate: field === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined,
-        maximumDate: field === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined,
-        onValueChange: (_event, date) => {
-          if (date) {
-            updateFilterDate(field, date);
-          }
-        },
-      });
-      return;
-    }
-
+    setFilterDateDraft(fromStoredDate(field === 'start' ? filterDateStart : filterDateEnd));
     setFilterDatePickerField(field);
   };
 
@@ -1009,16 +1023,15 @@ export default function App() {
   };
 
   const handleAddItem = async () => {
-    if (itemType === 'found' && getAccountType(user?.email) !== 'server') {
-      setStatus({ type: 'error', text: 'Somente servidores podem cadastrar itens achados.' });
-      return;
-    }
-
     if (!itemType) {
-      setStatus({ type: 'error', text: 'Selecione se o item está perdido ou achado.' });
+      setStatus({ type: 'error', text: 'Selecione o tipo do item.' });
       return;
     }
-
+    if (getAccountType(user?.email) !== 'server' && itemType !== 'lost') {
+      setStatus({ type: 'error', text: 'Estudantes só podem cadastrar itens perdidos.' });
+      return;
+    }
+    // Continue with existing validation and save logic
     if (!itemName.trim() || !itemDescription.trim() || !itemLocation.trim() || !itemCategory.trim()) {
       setStatus({ type: 'error', text: 'Preencha todos os campos.' });
       return;
@@ -1112,12 +1125,12 @@ export default function App() {
     setCommentsError('');
     try {
       await addDoc(collection(db, 'items', selectedItem.id, 'comments'), {
-        userId: user.uid,
-        authorName: profileName || user.displayName || user.email || 'Usuário',
-        authorPhotoUrl: profileImage || '',
-        text,
-        createdAt: serverTimestamp(),
-      });
+                userId: user.uid,
+                authorName: profileName || user.displayName || user.email || 'Usuário',
+                authorPhotoUrl: profileImage || '',
+                text,
+                createdAt: serverTimestamp(),
+              });
       setCommentText('');
     } catch (error) {
       setCommentsError(getFirestoreError(error, 'enviar o comentário'));
@@ -1127,11 +1140,23 @@ export default function App() {
   };
 
   const handleReportItemFound = async () => {
-    if (!selectedItem?.id || !selectedItem.userId || selectedItem.userId === user.uid || isSendingFoundNotice) {
+    const accountType = getAccountType(user?.email);
+    const reportKey = user?.uid && selectedItem?.id ? `${user.uid}:${selectedItem.id}` : '';
+    if (!reportKey
+      || !['student', 'server'].includes(accountType)
+      || selectedItem.type !== 'lost'
+      || selectedItem.status === 'recovered'
+      || !selectedItem.userId
+      || selectedItem.userId === user.uid
+      || isSendingFoundNotice
+      || reportedFoundItemIds.has(reportKey)
+      || foundNoticeInFlightRef.current.has(reportKey)) {
       return;
     }
 
+    foundNoticeInFlightRef.current.add(reportKey);
     setIsSendingFoundNotice(true);
+    setStatus({ type: '', text: '' });
     try {
       await setDoc(doc(db, 'notificationRequests', selectedItem.id), {
         itemId: selectedItem.id,
@@ -1143,13 +1168,18 @@ export default function App() {
         status: 'pending',
         createdAt: serverTimestamp(),
       });
-      setStatus({ type: 'success', text: 'Aviso registrado para o responsável pelo item.' });
+      setReportedFoundItemIds((currentIds) => new Set(currentIds).add(reportKey));
+      setStatus({
+        type: 'success',
+        text: 'Solicitação registrada no Firestore. A notificação e a visualização para servidores ainda não estão configuradas neste projeto.',
+      });
     } catch (error) {
       const message = error?.code === 'permission-denied'
-        ? 'Este item já foi sinalizado ou as regras do Firestore ainda não foram publicadas.'
+        ? 'Não foi possível registrar. A solicitação pode já existir para este item ou as regras atuais podem bloquear a gravação.'
         : getFirestoreError(error, 'registrar o aviso');
       setStatus({ type: 'error', text: message });
     } finally {
+      foundNoticeInFlightRef.current.delete(reportKey);
       setIsSendingFoundNotice(false);
     }
   };
@@ -1307,46 +1337,36 @@ export default function App() {
         <View style={styles.emptyState}>
           <Text style={styles.emptyStateMark}>◎</Text>
           <Text style={styles.cardTitle}>
-            {searchQuery || selectedCategory !== 'Todas' || hasDateFilter
-              ? 'Nenhum resultado encontrado'
-              : ownItemsOnly
-                ? 'Você ainda não publicou nenhum item'
-                : type === 'lost'
-                  ? 'Nenhum item perdido por aqui'
-                  : type === 'recovered' ? 'Nenhum item recuperado por aqui' : 'Nenhum item achado por aqui'}
+            {ownItemsOnly ? 'Você ainda não publicou nenhum item' : type === 'lost' ? 'Nenhum item perdido por aqui' : 'Nenhum item encontrado'}
           </Text>
           <Text style={styles.cardText}>Tente ajustar a busca ou confira novamente mais tarde.</Text>
         </View>
       );
     }
-
     return (
       <View style={styles.itemGrid}>
         {items.map((item) => {
           const itemStatus = item.status === 'recovered' ? 'recovered' : item.type || 'found';
-          const itemStatusLabel = {
-            lost: 'Perdido',
-            found: 'Achado',
-            recovered: 'Recuperado',
-          }[itemStatus] || 'Achado';
-          const itemStatusStyle = itemStatus === 'lost'
+          const statusLabel = { lost: 'Perdido', found: 'Achado', recovered: 'Recuperado' }[itemStatus] || 'Achado';
+          const statusStyle = itemStatus === 'lost'
             ? styles.itemTypeBadgeLost
             : itemStatus === 'recovered' ? styles.itemTypeBadgeRecovered : styles.itemTypeBadgeFound;
-          const itemStatusTextStyle = itemStatus === 'lost'
+          const statusTextStyle = itemStatus === 'lost'
             ? styles.itemTypeBadgeTextLost
             : itemStatus === 'recovered' ? styles.itemTypeBadgeTextRecovered : styles.itemTypeBadgeTextFound;
           const itemDateLabel = item.eventDateStart
             ? `${formatStoredDate(item.eventDateStart)}${item.eventDateEnd ? ` até ${formatStoredDate(item.eventDateEnd)}` : ''}`
             : '';
-          const itemStatusDetail = itemStatus === 'recovered'
-            ? `Retirado por ${item.pickedUpBy || 'não informado'} - ${formatItemTimestamp(item.pickedUpAt)}`
+          const statusDetail = itemStatus === 'recovered'
+            ? `Retirado por ${item.pickedUpBy || item.recoveredByName || 'não informado'} - ${formatItemTimestamp(item.pickedUpAt || item.recoveredAt)}`
             : itemStatus === 'found' && item.foundAtDaeeAt
               ? `Na DAEE desde ${formatItemTimestamp(item.foundAtDaeeAt)}`
               : '';
+
           return (
             <TouchableOpacity
-              style={styles.itemCard}
               key={item.id}
+              style={styles.itemCard}
               onPress={() => {
                 setSelectedItem(item);
                 setItemComments([]);
@@ -1366,16 +1386,17 @@ export default function App() {
                 ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
                 : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
               <View style={styles.itemCardContent}>
-                <View style={[styles.itemTypeBadge, itemStatusStyle]}>
-                  <Text style={[styles.itemTypeBadgeText, itemStatusTextStyle]}>
-                    {itemStatusLabel}
-                  </Text>
+                <View style={[styles.itemTypeBadge, statusStyle]}>
+                  <Text style={[styles.itemTypeBadgeText, statusTextStyle]}>{statusLabel}</Text>
                 </View>
-                <View style={styles.itemCategoryBadge}>
-                  <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
-                    {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
-                  </Text>
-                </View>
+                {item.type === 'lost' && isOldLost(item.createdAt) ? (
+                  <View style={styles.oldLostBadge}>
+                    <Text style={styles.oldLostBadgeText}>Perdido há muito tempo</Text>
+                  </View>
+                ) : null}
+                <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
+                  {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
+                </Text>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
                 <Text style={styles.cardText} numberOfLines={2}>{item.description}</Text>
                 <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
@@ -1383,13 +1404,11 @@ export default function App() {
                   <>
                     <Text style={styles.recoveredTag}>RECUPERADO</Text>
                     <Text style={styles.cardText}>Recuperado em: {formatDateTime(item.recoveredAt)}</Text>
-                    <Text style={styles.cardText}>
-                      Recuperado por: {item.recoveredByName || 'Servidor'}{item.recoveredByEmail ? ` · ${item.recoveredByEmail}` : ''}
-                    </Text>
+                    <Text style={styles.cardText}>Recuperado por: {item.recoveredByName || 'Servidor'}</Text>
                   </>
                 ) : null}
                 {itemDateLabel ? <Text style={styles.itemDate} numberOfLines={1}>Data: {itemDateLabel}</Text> : null}
-                {itemStatusDetail ? <Text style={styles.itemDate} numberOfLines={2}>{itemStatusDetail}</Text> : null}
+                {statusDetail ? <Text style={styles.itemDate} numberOfLines={2}>{statusDetail}</Text> : null}
                 <View style={styles.itemCreatorRow}>
                   <Image
                     source={item.creatorPhotoUrl ? { uri: item.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
@@ -1409,8 +1428,7 @@ export default function App() {
         })}
       </View>
     );
-  }, [navigateTo, searchQuery, selectedCategory, hasDateFilter]);
-
+  }, [navigateTo]);
 
   if (user) {
     return (
@@ -1422,736 +1440,416 @@ export default function App() {
               <ScrollView
                 ref={scrollViewRef}
                 style={styles.screenScroll}
-                contentContainerStyle={[styles.container, (isItemListView || activeView === 'itemDetail') && styles.containerWithFloatingActions]}
+                contentContainerStyle={styles.container}
                 keyboardShouldPersistTaps="handled"
                 onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
                 scrollEventThrottle={16}
               >
-            {activeView === 'items' && (
-              <>
-                <Text style={styles.eyebrow}>ACHADOS & PERDIDOS</Text>
-                <Text style={styles.title}>Itens</Text>
-                <View style={styles.myItemsFilterRow} accessibilityRole="radiogroup">
-                  {[
-                    { key: 'lost', label: 'Perdidos' },
-                    { key: 'found', label: 'Achados' },
-                    { key: 'recovered', label: 'Recuperados' },
-                  ].map((filter) => (
-                    <TouchableOpacity
-                      key={filter.key}
-                      style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]}
-                      onPress={() => setItemListFilter(filter.key)}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: itemListFilter === filter.key }}
-                    >
-                      <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>
-                        {filter.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={styles.searchBox}>
-                  <Text style={styles.searchMark}>⌕</Text>
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Buscar por nome, local..."
-                    placeholderTextColor="#8B8992"
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    returnKeyType="search"
-                  />
-                  {searchQuery ? <TouchableOpacity onPress={() => setSearchQuery('')}><Text style={styles.clearSearch}>×</Text></TouchableOpacity> : null}
-                  <TouchableOpacity
-                    style={[styles.categoryFilterButton, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterButtonActive]}
-                    onPress={() => {
-                      setShowCategoryFilters((showing) => !showing);
-                      setFilterDatePickerField(null);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Abrir filtros"
-                    accessibilityState={{ expanded: showCategoryFilters, selected: selectedCategory !== 'Todas' || hasDateFilter }}
-                  >
-                    <View style={styles.categoryFilterIcon}>
-                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkWide, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
-                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkMiddle, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
-                      <View style={[styles.categoryFilterMark, styles.categoryFilterMarkNarrow, (showCategoryFilters || selectedCategory !== 'Todas' || hasDateFilter) && styles.categoryFilterMarkActive]} />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-                {showCategoryFilters && (
-                  <ScrollView
-                    horizontal
-                    style={[
-                      styles.categoryFilterScroll,
-                      Platform.OS === 'web' && {
-                        scrollbarWidth: 'thin',
-                        scrollbarColor: '#6336C8 #E8E4EC',
-                      },
-                    ]}
-                    showsHorizontalScrollIndicator
-                    contentContainerStyle={styles.categoryRow}
-                  >
-                    {categoryOptions.map((category) => {
-                      const categoryOption = ITEM_CATEGORIES.find((option) => option.label === category);
-                      return (
-                        <TouchableOpacity
-                          key={category}
-                          style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]}
-                          onPress={() => setSelectedCategory(category)}
-                        >
-                          <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>
-                            {categoryOption ? `${categoryOption.symbol} ` : ''}{category}
-                          </Text>
+                {activeView === 'items' && (
+                  <>
+                    <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
+                    <Text style={styles.title}>Itens</Text>
+                    <View style={styles.myItemsFilterRow}>
+                      {[
+                        { key: 'lost', label: 'Perdidos' },
+                        { key: 'found', label: 'Achados' },
+                        { key: 'recovered', label: 'Recuperados' },
+                      ].map((filter) => (
+                        <TouchableOpacity key={filter.key} style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]} onPress={() => setItemListFilter(filter.key)}>
+                          <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>{filter.label}</Text>
                         </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
+                      ))}
+                    </View>
+                    <View style={styles.searchBox}>
+                      <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
+                      <TouchableOpacity style={styles.categoryFilterButton} onPress={() => setShowCategoryFilters((value) => !value)}>
+                        <Text>☷</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {showCategoryFilters && (
+                      <>
+                        <ScrollView horizontal contentContainerStyle={styles.categoryRow}>
+                          {categoryOptions.map((category) => (
+                            <TouchableOpacity key={category} style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]} onPress={() => setSelectedCategory(category)}>
+                              <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                        <View style={styles.dateFilterPanel}>
+                          <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
+                          <View style={styles.authModeRow}>
+                            {[
+                              { key: 'single', label: 'Uma data' },
+                              { key: 'period', label: 'Período' },
+                            ].map((mode) => (
+                              <TouchableOpacity
+                                key={mode.key}
+                                style={[styles.authModeButton, filterDateMode === mode.key && styles.authModeButtonActive]}
+                                onPress={() => {
+                                  setFilterDateMode(mode.key);
+                                  if (mode.key === 'single') setFilterDateEnd('');
+                                  setFilterDatePickerField(null);
+                                }}
+                              >
+                                <Text style={[styles.authModeText, filterDateMode === mode.key && styles.authModeTextActive]}>{mode.label}</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                          {renderFilterDateField('start', filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
+                          {filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
+                          {filterDatePickerField ? (
+                            <>
+                              <DateTimePicker
+                                value={filterDateDraft}
+                                mode="date"
+                                display={Platform.OS === 'android' ? 'default' : 'spinner'}
+                                presentation={Platform.OS === 'android' ? 'dialog' : 'inline'}
+                                locale="pt-BR"
+                                minimumDate={filterDatePickerField === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined}
+                                maximumDate={filterDatePickerField === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined}
+                                positiveButton={{ label: 'Confirmar' }}
+                                negativeButton={{ label: 'Cancelar' }}
+                                onValueChange={(_event, date) => {
+                                  if (!date) return;
+                                  if (Platform.OS === 'android') {
+                                    updateFilterDate(filterDatePickerField, date);
+                                    setFilterDatePickerField(null);
+                                  } else {
+                                    setFilterDateDraft(date);
+                                  }
+                                }}
+                                onDismiss={() => setFilterDatePickerField(null)}
+                              />
+                              {Platform.OS !== 'android' && (
+                                <View style={styles.datePickerPanel}>
+                                  <View style={styles.datePickerActions}>
+                                    <TouchableOpacity style={styles.datePickerCancel} onPress={() => setFilterDatePickerField(null)}>
+                                      <Text style={styles.datePickerCancelText}>Cancelar</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.datePickerConfirm}
+                                      onPress={() => {
+                                        updateFilterDate(filterDatePickerField, filterDateDraft);
+                                        setFilterDatePickerField(null);
+                                      }}
+                                    >
+                                      <Text style={styles.datePickerDoneText}>Confirmar</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              )}
+                            </>
+                          ) : null}
+                          {hasDateFilter ? (
+                            <TouchableOpacity onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); setFilterDatePickerField(null); }}>
+                              <Text style={styles.dateFilterClear}>Limpar datas</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      </>
+                    )}
+                    <View style={styles.sectionHeading}>
+                      <Text style={styles.sectionHeadingTitle}>{itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}</Text>
+                      <Text style={styles.resultCount}>{filteredItemsByType[itemListFilter].length} itens</Text>
+                    </View>
+                    {renderItemList(filteredItemsByType[itemListFilter], itemListFilter)}
+                  </>
                 )}
-                {showCategoryFilters && (
-                  <View style={styles.dateFilterPanel}>
-                    <View style={styles.dateFilterHeader}>
-                      <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
-                      {hasDateFilter ? (
+
+                {activeView === 'itemDetail' && selectedItem && (
+                  <View>
+                    <TouchableOpacity style={styles.detailBackButton} onPress={() => navigateTo('items')}>
+                      <Text style={styles.detailBackText}>‹ Voltar aos itens</Text>
+                    </TouchableOpacity>
+                    {selectedItem.imageUrl ? <Image source={{ uri: selectedItem.imageUrl }} style={styles.detailImage} resizeMode="cover" /> : null}
+                    <View style={styles.detailInformation}>
+                      <Text style={styles.detailType}>{selectedItem.status === 'recovered' ? 'ITEM RECUPERADO' : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}</Text>
+                      <Text style={styles.detailTitle}>{selectedItem.name}</Text>
+                      <Text style={styles.detailDescription}>{selectedItem.description}</Text>
+                      <Text style={styles.detailLabel}>Local</Text>
+                      <Text style={styles.detailValue}>{selectedItem.location}</Text>
+                      <Text style={styles.detailLabel}>Categoria</Text>
+                      <Text style={styles.detailValue}>{normalizeItemCategory(selectedItem.category)}</Text>
+                      {selectedItem.status === 'recovered' ? (
+                        <>
+                          <Text style={styles.detailLabel}>Recuperado em</Text>
+                          <Text style={styles.detailValue}>{formatDateTime(selectedItem.recoveredAt)}</Text>
+                          <Text style={styles.detailLabel}>Registrado por</Text>
+                          <View style={styles.recoveredByRow}>
+                            <Image
+                              source={selectedItem.recoveredByPhotoUrl ? { uri: selectedItem.recoveredByPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+                              style={styles.recoveredByAvatar}
+                              resizeMode="cover"
+                            />
+                            <View style={styles.recoveredByInfo}>
+                              <Text style={styles.detailValue}>{selectedItem.recoveredByName || 'Servidor'}</Text>
+                              {selectedItem.recoveredByEmail ? <Text style={styles.recoveredByEmail}>{selectedItem.recoveredByEmail}</Text> : null}
+                            </View>
+                          </View>
+                          {isLoadingRecoveryPerson ? <ActivityIndicator color="#6336C8" /> : null}
+                          {canViewRecoveryPerson && recoveryPersonItemId === selectedItem.id && recoveryPerson ? (
+                            <View style={styles.recoveredPersonDetails}>
+                              <Text style={styles.detailLabel}>Quem recuperou</Text>
+                              <Text style={styles.detailValue}>{recoveryPerson.name}</Text>
+                              <Text style={styles.recoveredPersonMeta}>Turma: {recoveryPerson.class}</Text>
+                              <Text style={styles.recoveredPersonMeta}>Matrícula: {recoveryPerson.enrollment}</Text>
+                            </View>
+                          ) : null}
+                        </>
+                      ) : null}
+                      <View style={styles.creatorSection}>
+                        <Image
+                          source={selectedItem.creatorPhotoUrl ? { uri: selectedItem.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+                          style={styles.creatorAvatar}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.creatorText}>
+                          <Text style={styles.creatorLabel}>Cadastrado por</Text>
+                          <Text style={styles.creatorName}>{selectedItem.creatorName || 'Autor não informado'}</Text>
+                          <Text style={styles.creatorEmail}>{formatDisplayEmail(selectedItem.creatorEmail) || 'E-mail indisponível'}</Text>
+                        </View>
+                      </View>
+                      {selectedItem.type === 'lost' && canManageSelectedItem ? (
+                        <View>
+                          {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
+                          <TouchableOpacity style={styles.foundButton} onPress={handleMarkItemFound} disabled={isRegisteringPickup}>
+                            {isRegisteringPickup ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Registrar como achado</Text>}
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                      {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && selectedItem.userId !== user.uid ? (
                         <TouchableOpacity
-                          onPress={() => {
-                            setFilterDateStart('');
-                            setFilterDateEnd('');
-                            setFilterDateMode('single');
-                            setFilterDatePickerField(null);
-                          }}
-                          accessibilityRole="button"
+                          style={[styles.foundButton, (isSendingFoundNotice || reportedFoundItemIds.has(`${user.uid}:${selectedItem.id}`)) && styles.buttonDisabled]}
+                          onPress={handleReportItemFound}
+                          disabled={isSendingFoundNotice || reportedFoundItemIds.has(`${user.uid}:${selectedItem.id}`)}
                         >
-                          <Text style={styles.dateFilterClear}>Limpar</Text>
+                          {isSendingFoundNotice
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={styles.buttonText}>{reportedFoundItemIds.has(`${user.uid}:${selectedItem.id}`) ? 'Solicitação registrada' : 'Achei'}</Text>}
                         </TouchableOpacity>
                       ) : null}
+                      {selectedItem.type === 'found' && getAccountType(user.email) === 'server' && selectedItem.status !== 'recovered' ? (
+                        isRecoveryFormVisible ? (
+                          <View style={styles.recoveryForm}>
+                            <Text style={styles.commentsTitle}>Dados de quem recuperou</Text>
+                            <TextInput style={styles.input} placeholder="Nome completo" value={recoveredPersonName} onChangeText={setRecoveredPersonName} />
+                            <TextInput style={styles.input} placeholder="Turma" value={recoveredPersonClass} onChangeText={setRecoveredPersonClass} />
+                            <TextInput style={styles.input} placeholder="Matrícula" value={recoveredPersonEnrollment} onChangeText={setRecoveredPersonEnrollment} />
+                            <TouchableOpacity style={styles.recoveredButton} onPress={handleMarkRecovered} disabled={isMarkingRecovered}>
+                              {isMarkingRecovered ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Marcar como recuperado</Text>}
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.cancelRecoveryButton} onPress={() => setIsRecoveryFormVisible(false)} disabled={isMarkingRecovered}>
+                              <Text style={styles.cancelButtonText}>Cancelar</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity style={styles.recoveredButton} onPress={() => setIsRecoveryFormVisible(true)}>
+                            <Text style={styles.buttonText}>Marcar como recuperado</Text>
+                          </TouchableOpacity>
+                        )
+                      ) : null}
+                      <View style={styles.commentsSection}>
+                        <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
+                        {commentsError ? <Text style={styles.errorText}>{commentsError}</Text> : null}
+                        {isLoadingComments ? <ActivityIndicator color="#6336C8" /> : null}
+                        <TextInput style={styles.commentInput} placeholder="Escreva um comentário..." value={commentText} onChangeText={setCommentText} multiline />
+                        <TouchableOpacity style={styles.commentSubmitButton} onPress={handleAddComment} disabled={isSubmittingComment}>
+                          {isSubmittingComment ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Comentar</Text>}
+                        </TouchableOpacity>
+                        {!isLoadingComments && !itemComments.length && !commentsError ? <Text style={styles.emptyComments}>Ainda não há comentários. Comece a conversa.</Text> : null}
+                        {itemComments.map((comment) => <CommentItem key={comment.id} comment={comment} itemId={selectedItem.id} user={user} profileName={profileName} profileImage={profileImage} />)}
+                      </View>
                     </View>
-                    <View style={styles.authModeRow} accessibilityRole="radiogroup">
+                  </View>
+                )}
+
+                {activeView === 'profile' && (
+                  <View style={styles.profileScreen}>
+                    <Text style={styles.title}>Meu perfil</Text>
+                    <Text style={styles.profileTypeTitle}>{getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}</Text>
+                    <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
+                      <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
+                    </TouchableOpacity>
+                    <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
+                    <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
+                    <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('myItems')}><Text style={styles.profileActionTitle}>Meus itens</Text></TouchableOpacity>
+                    <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}><Text style={styles.profileActionTitle}>Configurações</Text></TouchableOpacity>
+                  </View>
+                )}
+
+                {activeView === 'myItems' && (
+                  <View>
+                    <TouchableOpacity style={styles.backButton} onPress={() => navigateTo('profile')}><Text style={styles.backButtonText}>‹</Text></TouchableOpacity>
+                    <Text style={styles.title}>Meus itens</Text>
+                    <View style={styles.myItemsFilterRow}>
+                      {[
+                        { key: 'all', label: 'Todos' },
+                        { key: 'lost', label: 'Perdidos' },
+                        { key: 'found', label: 'Achados' },
+                        { key: 'recovered', label: 'Recuperados' },
+                      ].map((filter) => (
+                        <TouchableOpacity
+                          key={filter.key}
+                          style={[styles.myItemsFilter, myItemFilter === filter.key && styles.myItemsFilterActive]}
+                          onPress={() => setMyItemFilter(filter.key)}
+                        >
+                          <Text style={[styles.myItemsFilterText, myItemFilter === filter.key && styles.myItemsFilterTextActive]}>
+                            {filter.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    {renderItemList(
+                      myItemsOnly.filter((item) => myItemFilter === 'all'
+                        || (myItemFilter === 'recovered'
+                          ? item.type === 'recovered' || item.status === 'recovered'
+                          : (item.type || 'found') === myItemFilter)),
+                      myItemFilter,
+                      true,
+                    )}
+                  </View>
+                )}
+
+                {activeView === 'settings' && (
+                  <View>
+                    <TouchableOpacity style={styles.backButton} onPress={() => navigateTo('profile')}><Text style={styles.backButtonText}>‹</Text></TouchableOpacity>
+                    <Text style={styles.title}>Configurações</Text>
+                    <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('name')}><Text>Nome: {profileName || user.displayName}</Text></TouchableOpacity>
+                    <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('email')}><Text>E-mail: {formatDisplayEmail(user.email)}</Text></TouchableOpacity>
+                    <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('password')}><Text>Alterar senha</Text></TouchableOpacity>
+                    {editingProfileField ? (
+                      <View style={styles.profileEditForm}>
+                        {editingProfileField === 'name' ? <TextInput style={styles.input} placeholder="Seu nome" value={profileNameDraft} onChangeText={setProfileNameDraft} /> : null}
+                        {editingProfileField === 'email' ? <TextInput style={styles.input} placeholder="Novo e-mail" value={profileEmailDraft} onChangeText={setProfileEmailDraft} /> : null}
+                        {editingProfileField === 'password' ? <TextInput style={styles.input} placeholder="Nova senha" value={newPassword} onChangeText={setNewPassword} secureTextEntry /> : null}
+                        {editingProfileField !== 'name' ? <TextInput style={styles.input} placeholder="Senha atual" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry /> : null}
+                        <TouchableOpacity
+                          style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]}
+                          onPress={handleSaveProfileField}
+                          disabled={isSavingProfile}
+                        >
+                          {isSavingProfile ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alteração</Text>}
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                    <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}><Text style={styles.buttonLogoutText}>Sair da conta</Text></TouchableOpacity>
+                    <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}><Text style={styles.buttonDeleteText}>Excluir conta</Text></TouchableOpacity>
+                    {confirmDelete ? (
+                      <View style={styles.confirmBox}>
+                        <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
+                        <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
+                        <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}><Text style={styles.buttonText}>Excluir</Text></TouchableOpacity>
+                        <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}><Text>Cancelar</Text></TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
+
+                {activeView === 'addItem' && (
+                  <View>
+                    <TouchableOpacity style={styles.backButton} onPress={() => navigateTo('items')}><Text style={styles.backButtonText}>‹</Text></TouchableOpacity>
+                    <Text style={styles.title}>Cadastrar item</Text>
+                    {getAccountType(user.email) === 'server' ? (
+                      <View style={styles.authModeRow}>
+                        {['lost', 'found'].map((type) => <TouchableOpacity key={type} style={styles.authModeButton} onPress={() => setItemType(type)}><Text>{type === 'lost' ? 'Perdido' : 'Achado'}</Text></TouchableOpacity>)}
+                      </View>
+                    ) : null}
+                    <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
+                    <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
+                    <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
+                    <View style={styles.authModeRow}>
                       {[
                         { key: 'single', label: 'Uma data' },
                         { key: 'period', label: 'Período' },
                       ].map((mode) => (
                         <TouchableOpacity
                           key={mode.key}
-                          style={[styles.authModeButton, filterDateMode === mode.key && styles.authModeButtonActive]}
+                          style={[styles.authModeButton, itemDateMode === mode.key && styles.authModeButtonActive]}
                           onPress={() => {
-                            setFilterDateMode(mode.key);
-                            setFilterDatePickerField(null);
-                            if (mode.key === 'single') {
-                              setFilterDateEnd('');
-                            }
+                            setItemDateMode(mode.key);
+                            setDatePickerField(null);
+                            if (mode.key === 'single') setItemDateEnd('');
                           }}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected: filterDateMode === mode.key }}
                         >
-                          <Text style={[styles.authModeText, filterDateMode === mode.key && styles.authModeTextActive]}>
-                            {mode.label}
-                          </Text>
+                          <Text style={[styles.authModeText, itemDateMode === mode.key && styles.authModeTextActive]}>{mode.label}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
-                    {renderFilterDateField('start', filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
-                    {filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
-                    {Platform.OS === 'ios' && filterDatePickerField ? (
-                      <View style={styles.filterDatePickerPanel}>
+                    {renderDateField('start', itemDateMode === 'period' ? 'Data inicial' : 'Data da ocorrência')}
+                    {itemDateMode === 'period' && renderDateField('end', 'Data final')}
+                    {datePickerField ? (
+                      <>
                         <DateTimePicker
-                          value={fromStoredDate(filterDatePickerField === 'start' ? filterDateStart : filterDateEnd)}
+                          value={itemDateDraft}
                           mode="date"
-                          display="spinner"
+                          display={Platform.OS === 'android' ? 'default' : 'spinner'}
+                          presentation={Platform.OS === 'android' ? 'dialog' : 'inline'}
                           locale="pt-BR"
-                          minimumDate={filterDatePickerField === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined}
-                          maximumDate={filterDatePickerField === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined}
-                          onValueChange={(_event, date) => date && updateFilterDate(filterDatePickerField, date)}
+                          minimumDate={datePickerField === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined}
+                          maximumDate={datePickerField === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined}
+                          positiveButton={{ label: 'Confirmar' }}
+                          negativeButton={{ label: 'Cancelar' }}
+                          onValueChange={(_event, date) => {
+                            if (!date) return;
+                            if (Platform.OS === 'android') {
+                              updateItemDate(datePickerField, date);
+                              setDatePickerField(null);
+                            } else {
+                              setItemDateDraft(date);
+                            }
+                          }}
+                          onDismiss={() => setDatePickerField(null)}
                         />
-                        <TouchableOpacity
-                          style={styles.filterDatePickerDone}
-                          onPress={() => setFilterDatePickerField(null)}
-                        >
-                          <Text style={styles.datePickerDoneText}>Concluir</Text>
+                        {Platform.OS !== 'android' && (
+                          <View style={styles.datePickerPanel}>
+                            <View style={styles.datePickerActions}>
+                              <TouchableOpacity style={styles.datePickerCancel} onPress={() => setDatePickerField(null)}>
+                                <Text style={styles.datePickerCancelText}>Cancelar</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.datePickerConfirm}
+                                onPress={() => {
+                                  updateItemDate(datePickerField, itemDateDraft);
+                                  setDatePickerField(null);
+                                }}
+                              >
+                                <Text style={styles.datePickerDoneText}>Confirmar</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+                      </>
+                    ) : null}
+                    <TouchableOpacity style={styles.categoryPicker} onPress={() => setShowCategoryOptions((value) => !value)}><Text>{itemCategory || 'Selecionar categoria'}</Text></TouchableOpacity>
+                    {showCategoryOptions ? (
+                      <View style={styles.categoryOptions}>
+                        {ITEM_CATEGORIES.map((category) => <TouchableOpacity key={category.label} style={styles.categoryOption} onPress={() => { setItemCategory(category.label); setShowCategoryOptions(false); }}><Text>{category.symbol} {category.label}</Text></TouchableOpacity>)}
+                      </View>
+                    ) : null}
+                    <TouchableOpacity style={styles.buttonPrimary} onPress={handlePickItemImage} disabled={isUploading}><Text style={styles.buttonText}>Selecionar imagem</Text></TouchableOpacity>
+                    {itemImage ? (
+                      <View style={styles.itemPreviewWrap}>
+                        <Image source={{ uri: itemImage }} style={styles.itemPreview} />
+                        <TouchableOpacity style={styles.removeImageButton} onPress={() => { setItemImage(null); setItemImageFile(null); }}>
+                          <Text style={styles.removeImageText}>Remover imagem</Text>
                         </TouchableOpacity>
                       </View>
                     ) : null}
+                    <TouchableOpacity style={styles.buttonPrimary} onPress={handleAddItem} disabled={isUploading}>{isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar</Text>}</TouchableOpacity>
                   </View>
                 )}
-              </>
-            )}
-
-            {activeView === 'items' && (
-              <View>
-                <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionHeadingTitle}>
-                    {itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}
-                  </Text>
-                  <Text style={styles.resultCount}>{filteredItemsByType[itemListFilter].length} itens</Text>
-                </View>
-                {renderItemList(filteredItemsByType[itemListFilter], itemListFilter)}
-              </View>
-            )}
-
-            {activeView === 'itemDetail' && selectedItem && (
-              <View>
-                <TouchableOpacity
-                  style={styles.detailBackButton}
-                  onPress={() => {
-                    setItemListFilter(selectedItem.status === 'recovered' ? 'recovered' : selectedItem.type || 'found');
-                    navigateTo('items');
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Voltar para a lista de itens"
-                >
-                  <Text style={styles.detailBackText}>‹  Voltar aos itens</Text>
-                </TouchableOpacity>
-                {selectedItem.imageUrl ? (
-                  <Image source={{ uri: selectedItem.imageUrl }} style={styles.detailImage} resizeMode="cover" />
-                ) : (
-                  <View style={styles.detailImagePlaceholder}>
-                    <Text style={styles.detailPlaceholderText}>Imagem não disponível</Text>
-                  </View>
-                )}
-                <View style={styles.detailInformation}>
-                  <Text style={styles.detailType}>
-                    {selectedItem.status === 'recovered' || selectedItem.type === 'recovered'
-                      ? 'ITEM RECUPERADO'
-                      : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}
-                  </Text>
-                  {selectedItem.status === 'recovered' ? <Text style={styles.recoveredTag}>RECUPERADO</Text> : null}
-                  <Text style={styles.detailTitle}>{selectedItem.name}</Text>
-                  <Text style={styles.detailDescription}>{selectedItem.description}</Text>
-                  <View style={styles.detailDivider} />
-                  <Text style={styles.detailLabel}>Local</Text>
-                  <Text style={styles.detailValue}>{selectedItem.location}</Text>
-                  <Text style={styles.detailLabel}>Categoria</Text>
-                  <Text style={styles.detailValue}>
-                    {getCategoryOption(selectedItem.category).symbol} {normalizeItemCategory(selectedItem.category)}
-                  </Text>
-                  {selectedItem.status === 'recovered' ? (
-                    <>
-                      <Text style={styles.detailLabel}>Recuperado em</Text>
-                      <Text style={styles.detailValue}>{formatDateTime(selectedItem.recoveredAt)}</Text>
-                      <Text style={styles.detailLabel}>Registrado por</Text>
-                      <View style={styles.recoveredByRow}>
-                        <Image
-                          source={selectedItem.recoveredByPhotoUrl ? { uri: selectedItem.recoveredByPhotoUrl } : DEFAULT_PROFILE_IMAGE}
-                          style={styles.recoveredByAvatar}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.recoveredByInfo}>
-                          <Text style={styles.detailValue}>{selectedItem.recoveredByName || 'Servidor'}</Text>
-                          {selectedItem.recoveredByEmail ? (
-                            <Text style={styles.recoveredByEmail}>{selectedItem.recoveredByEmail}</Text>
-                          ) : null}
-                        </View>
-                      </View>
-                      {isLoadingRecoveryPerson ? <ActivityIndicator color="#6336C8" /> : null}
-                      {getAccountType(user.email) === 'server' || selectedItem.userId === user.uid ? (
-                        recoveryPerson ? (
-                          <View style={styles.recoveredPersonDetails}>
-                            <Text style={styles.detailLabel}>Quem recuperou</Text>
-                            <Text style={styles.detailValue}>{recoveryPerson.name}</Text>
-                            <Text style={styles.recoveredPersonMeta}>Turma: {recoveryPerson.class}</Text>
-                            <Text style={styles.recoveredPersonMeta}>Matrícula: {recoveryPerson.enrollment}</Text>
-                          </View>
-                        ) : null
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.detailLabel}>
-                        {selectedItem.type === 'lost' ? 'Data da perda' : 'Data do achado'}
-                      </Text>
-                      <Text style={styles.detailValue}>
-                        {formatStoredDate(selectedItem.eventDateStart)}
-                        {selectedItem.eventDateEnd ? ` até ${formatStoredDate(selectedItem.eventDateEnd)}` : ''}
-                      </Text>
-                    </>
-                  )}
-
-                </View>
-                <View style={styles.creatorSection}>
-                  <Image
-                    source={selectedItem.creatorPhotoUrl ? { uri: selectedItem.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
-                    style={styles.creatorAvatar}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.creatorText}>
-                    <Text style={styles.creatorLabel}>Cadastrado por</Text>
-                    <Text style={styles.creatorName}>{selectedItem.creatorName || 'Autor não informado'}</Text>
-                    <Text style={styles.creatorEmail}>
-                      {formatDisplayEmail(selectedItem.creatorEmail) || 'E-mail indisponível'}
-                    </Text>
-                  </View>
-                </View>
-                {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && getAccountType(user.email) === 'server' ? (
-                  <View>
-                    {pickupError ? <Text style={styles.errorText}>{pickupError}</Text> : null}
-                    <TouchableOpacity
-                      style={[styles.foundButton, isRegisteringPickup && styles.buttonDisabled]}
-                      onPress={handleMarkItemFound}
-                      disabled={isRegisteringPickup}
-                      accessibilityRole="button"
-                    >
-                      {isRegisteringPickup
-                        ? <ActivityIndicator color="#fff" />
-                        : <Text style={styles.buttonText}>Registrar como achado</Text>}
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                {selectedItem.type === 'lost' && selectedItem.status !== 'recovered' && selectedItem.userId !== user.uid ? (
-                  <TouchableOpacity
-                    style={[styles.foundButton, isSendingFoundNotice && styles.buttonDisabled]}
-                    onPress={handleReportItemFound}
-                    disabled={isSendingFoundNotice}
-                    accessibilityRole="button"
-                  >
-                    {isSendingFoundNotice ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Achei</Text>}
-                  </TouchableOpacity>
-                ) : null}
-                {selectedItem.type === 'found' && selectedItem.status !== 'recovered' && getAccountType(user.email) === 'server' ? (
-                  isRecoveryFormVisible ? (
-                    <View style={styles.recoveryForm}>
-                      <Text style={styles.commentsTitle}>Dados de quem recuperou</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Nome completo"
-                        value={recoveredPersonName}
-                        onChangeText={setRecoveredPersonName}
-                        autoCapitalize="words"
-                        maxLength={100}
-                      />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Turma"
-                        value={recoveredPersonClass}
-                        onChangeText={setRecoveredPersonClass}
-                        maxLength={30}
-                      />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Matrícula"
-                        value={recoveredPersonEnrollment}
-                        onChangeText={setRecoveredPersonEnrollment}
-                        maxLength={40}
-                        autoCapitalize="none"
-                      />
-                      <TouchableOpacity
-                        style={[styles.recoveredButton, isMarkingRecovered && styles.buttonDisabled]}
-                        onPress={handleMarkRecovered}
-                        disabled={isMarkingRecovered}
-                        accessibilityRole="button"
-                      >
-                        {isMarkingRecovered ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Confirmar recuperação</Text>}
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.cancelRecoveryButton}
-                        onPress={() => {
-                          setIsRecoveryFormVisible(false);
-                          setRecoveredPersonName('');
-                          setRecoveredPersonClass('');
-                          setRecoveredPersonEnrollment('');
-                        }}
-                        disabled={isMarkingRecovered}
-                        accessibilityRole="button"
-                      >
-                        <Text style={styles.cancelButtonText}>Cancelar</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.recoveredButton}
-                      onPress={() => setIsRecoveryFormVisible(true)}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.buttonText}>Marcar como recuperado</Text>
-                    </TouchableOpacity>
-                  )
-                ) : null}
-                {status.text ? (
-                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-                ) : null}
-                <View style={styles.commentsSection}>
-                  <Text style={styles.commentsTitle}>Comentários ({itemComments.length})</Text>
-                  {commentsError ? <Text style={styles.errorText}>{commentsError}</Text> : null}
-                  {isLoadingComments ? <ActivityIndicator color="#6336C8" /> : null}
-                  <TextInput
-                    style={styles.commentInput}
-                    placeholder="Escreva um comentário..."
-                    value={commentText}
-                    onChangeText={setCommentText}
-                    multiline
-                    maxLength={1000}
-                    textAlignVertical="top"
-                  />
-                  <TouchableOpacity
-                    style={[styles.commentSubmitButton, (!commentText.trim() || isSubmittingComment) && styles.buttonDisabled]}
-                    onPress={handleAddComment}
-                    disabled={!commentText.trim() || isSubmittingComment}
-                    accessibilityRole="button"
-                  >
-                    {isSubmittingComment ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Comentar</Text>}
-                  </TouchableOpacity>
-                  {!isLoadingComments && !itemComments.length && !commentsError ? (
-                    <Text style={styles.emptyComments}>Ainda não há comentários. Comece a conversa.</Text>
-                  ) : null}
-                  {itemComments.map((comment) => (
-                    <CommentItem
-                      key={comment.id}
-                      comment={comment}
-                      itemId={selectedItem.id}
-                      user={user}
-                      profileName={profileName}
-                      profileImage={profileImage}
-                    />
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {activeView === 'profile' && (
-              <View style={styles.profileScreen}>
-                <Text style={[styles.title, styles.profilePageTitle]}>Meu perfil</Text>
-                <View style={styles.profileHero}>
-              <View style={styles.profileIdentity}>
-                <Text style={styles.profileTypeTitle}>
-                  {getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}
-                </Text>
-                <View style={styles.profileImageContainer}>
-                  <TouchableOpacity style={styles.profileImageButton} onPress={handlePickProfileImage} disabled={isUploading}>
-                    <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
-                <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
-                <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
-                  <Text style={styles.changeImageText}>Alterar foto do perfil</Text>
-                </TouchableOpacity>
-                </View>
-                </View>
-                <TouchableOpacity style={styles.profileAction} onPress={() => { setSelectedCategory('Todas'); setSearchQuery(''); navigateTo('myItems'); }}>
-                  <View><Text style={styles.profileActionTitle}>Meus itens</Text><Text style={styles.profileActionSubtitle}>Acompanhe o que você publicou</Text></View>
-                  <Text style={styles.actionArrow}>›</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}>
-                  <View><Text style={styles.profileActionTitle}>Configurações</Text><Text style={styles.profileActionSubtitle}>Conta e segurança</Text></View>
-                  <Text style={styles.actionArrow}>›</Text>
-                </TouchableOpacity>
-                {status.text ? (
-                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-                ) : null}
-              </View>
-            )}
-
-            {activeView === 'myItems' && (
-              <View>
-                <TouchableOpacity onPress={() => navigateTo('profile')} style={styles.backButton}>
-                  <Text style={styles.backButtonText}>‹</Text>
-                </TouchableOpacity>
-                <Text style={styles.title}>Meus itens</Text>
-                <View style={styles.sectionHeading}>
-                  <Text style={styles.sectionHeadingTitle}>Suas publicações</Text>
-                  <Text style={styles.resultCount}>{foundItems.filter((item) => item.userId === user.uid).length} itens</Text>
-                </View>
-                <View style={styles.myItemsFilterRow}>
-                  {[
-                    { key: 'all', label: 'Todos' },
-                    { key: 'lost', label: 'Perdidos' },
-                    { key: 'found', label: 'Achados' },
-                    { key: 'recovered', label: 'Recuperados' },
-                  ].map((filter) => (
-                    <TouchableOpacity
-                      key={filter.key}
-                      style={[styles.myItemsFilter, myItemFilter === filter.key && styles.myItemsFilterActive]}
-                      onPress={() => setMyItemFilter(filter.key)}
-                    >
-                      <Text style={[styles.myItemsFilterText, myItemFilter === filter.key && styles.myItemsFilterTextActive]}>{filter.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                {renderItemList(
-                  myItemsOnly.filter((item) => myItemFilter === 'all' || (item.type || 'found') === myItemFilter),
-                  myItemFilter,
-                  true,
-                )}
-              </View>
-            )}
-
-            {activeView === 'settings' && (
-              <View>
-                <TouchableOpacity onPress={() => navigateTo('profile')} style={styles.backButton}>
-                  <Text style={styles.backButtonText}>‹</Text>
-                </TouchableOpacity>
-                <Text style={styles.title}>Configurações</Text>
-                <View style={styles.settingsSection}>
-                  <Text style={styles.settingsLabel}>CONTA</Text>
-                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('name')}>
-                    <View><Text style={styles.settingsRowTitle}>Nome</Text><Text style={styles.settingsRowValue}>{profileName || user.displayName || 'Não informado'}</Text></View>
-                    <Text style={styles.settingsEditLabel}>Trocar</Text>
-                  </TouchableOpacity>
-                  <View style={styles.settingsDivider} />
-                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('email')}>
-                    <View><Text style={styles.settingsRowTitle}>E-mail</Text><Text style={styles.settingsRowValue}>{formatDisplayEmail(user.email)}</Text></View>
-                    <Text style={styles.settingsEditLabel}>Trocar</Text>
-                  </TouchableOpacity>
-                  <View style={styles.settingsDivider} />
-                  <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('password')}>
-                    <View><Text style={styles.settingsRowTitle}>Senha</Text><Text style={styles.settingsRowValue}>Atualizar senha de acesso</Text></View>
-                    <Text style={styles.settingsEditLabel}>Trocar</Text>
-                  </TouchableOpacity>
-                </View>
-                {editingProfileField ? (
-                  <View style={styles.profileEditForm}>
-                    <Text style={styles.sectionTitle}>
-                      {editingProfileField === 'name' ? 'Alterar nome' : editingProfileField === 'email' ? 'Alterar e-mail' : 'Alterar senha'}
-                    </Text>
-                    {editingProfileField === 'name' ? (
-                      <TextInput style={styles.input} placeholder="Seu nome" value={profileNameDraft} onChangeText={setProfileNameDraft} autoCapitalize="words" />
-                    ) : (
-                      <>
-                        {editingProfileField === 'email' ? (
-                          <TextInput style={styles.input} placeholder="Novo e-mail" value={profileEmailDraft} onChangeText={setProfileEmailDraft} keyboardType="email-address" autoCapitalize="none" />
-                        ) : (
-                          <TextInput style={styles.input} placeholder="Nova senha (mínimo 6 caracteres)" value={newPassword} onChangeText={setNewPassword} secureTextEntry />
-                        )}
-                        <TextInput style={styles.input} placeholder="Senha atual" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
-                      </>
-                    )}
-                    <TouchableOpacity style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]} onPress={handleSaveProfileField} disabled={isSavingProfile}>
-                      {isSavingProfile ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alteração</Text>}
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setEditingProfileField('')}>
-                      <Text style={styles.cancelEditText}>Cancelar</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}>
-                  <Text style={styles.buttonLogoutText}>Sair da conta</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.buttonDelete} onPress={() => setConfirmDelete(true)}>
-                  <Text style={styles.buttonDeleteText}>Excluir conta</Text>
-                </TouchableOpacity>
-                {status.text ? (
-                  <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-                ) : null}
-                {confirmDelete && (
-                  <View style={styles.confirmBox}>
-                    <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
-                    <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
-                    <View style={styles.confirmActions}>
-                      <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
-                        <Text style={styles.cancelButtonText}>Cancelar</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
-                        <Text style={styles.buttonText}>Excluir</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {activeView === 'addItem' && (
-              <View>
-                  <TouchableOpacity
-                    style={styles.backButton}
-                    onPress={() => {
-                      if (itemType) {
-                        setItemListFilter(itemType);
-                      }
-                      navigateTo('items');
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Voltar para os itens"
-                  >
-                    <Text style={styles.backButtonText}>‹</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.title}>Cadastrar item</Text>
-                  <View style={styles.authModeRow} accessibilityRole="radiogroup">
-                    {[
-                      { key: 'lost', label: 'Perdido' },
-                      ...(getAccountType(user?.email) === 'server' ? [{ key: 'found', label: 'Achado' }] : []),
-                    ].map((typeOption) => (
-                      <TouchableOpacity
-                        key={typeOption.key}
-                        style={[styles.authModeButton, itemType === typeOption.key && styles.authModeButtonActive]}
-                        onPress={() => setItemType(typeOption.key)}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: itemType === typeOption.key }}
-                      >
-                        <Text style={[styles.authModeText, itemType === typeOption.key && styles.authModeTextActive]}>
-                          {typeOption.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
-                  <TextInput style={styles.input} placeholder="Descrição" value={itemDescription} onChangeText={setItemDescription} />
-                  <TextInput style={styles.input} placeholder="Localização" value={itemLocation} onChangeText={setItemLocation} />
-                  <View style={styles.authModeRow} accessibilityRole="radiogroup">
-                    {[
-                      { key: 'single', label: 'Uma data' },
-                      { key: 'period', label: 'Período' },
-                    ].map((mode) => (
-                      <TouchableOpacity
-                        key={mode.key}
-                        style={[styles.authModeButton, itemDateMode === mode.key && styles.authModeButtonActive]}
-                        onPress={() => {
-                          setItemDateMode(mode.key);
-                          setDatePickerField(null);
-                          if (mode.key === 'single') {
-                            setItemDateEnd('');
-                          }
-                        }}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: itemDateMode === mode.key }}
-                      >
-                        <Text style={[styles.authModeText, itemDateMode === mode.key && styles.authModeTextActive]}>
-                          {mode.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  {renderDateField('start', itemDateMode === 'period'
-                    ? 'Data inicial'
-                    : itemType === 'lost' ? 'Data em que perdeu' : itemType === 'found' ? 'Data em que encontrou' : 'Data da ocorrência')}
-                  {itemDateMode === 'period' && renderDateField('end', 'Data final')}
-                  {Platform.OS === 'ios' && datePickerField ? (
-                    <View style={styles.datePickerPanel}>
-                      <DateTimePicker
-                        value={fromStoredDate(datePickerField === 'start' ? itemDateStart : itemDateEnd)}
-                        mode="date"
-                        display="spinner"
-                        locale="pt-BR"
-                        minimumDate={datePickerField === 'end' && itemDateStart ? fromStoredDate(itemDateStart) : undefined}
-                        maximumDate={datePickerField === 'start' && itemDateEnd ? fromStoredDate(itemDateEnd) : undefined}
-                        onValueChange={(_event, date) => date && updateItemDate(datePickerField, date)}
-                      />
-                      <TouchableOpacity style={styles.datePickerDone} onPress={() => setDatePickerField(null)}>
-                        <Text style={styles.datePickerDoneText}>Concluir</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                  <TouchableOpacity
-                    style={styles.categoryPicker}
-                    onPress={() => setShowCategoryOptions((showing) => !showing)}
-                    accessibilityRole="button"
-                    accessibilityLabel={itemCategory || 'Selecionar categoria do item'}
-                  >
-                    <Text style={[styles.categoryPickerText, !itemCategory && styles.categoryPlaceholder]}>
-                      {itemCategory ? `${getCategoryOption(itemCategory).symbol} ${itemCategory}` : 'Selecionar categoria'}
-                    </Text>
-                  </TouchableOpacity>
-                  {showCategoryOptions && (
-                    <View style={styles.categoryOptions}>
-                      {ITEM_CATEGORIES.map((category) => (
-                        <TouchableOpacity
-                          key={category.label}
-                          style={[styles.categoryOption, itemCategory === category.label && styles.categoryOptionSelected]}
-                          onPress={() => {
-                            setItemCategory(category.label);
-                            setShowCategoryOptions(false);
-                          }}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: itemCategory === category.label }}
-                        >
-                          <Text style={[styles.categoryOptionText, itemCategory === category.label && styles.categoryOptionTextSelected]}>
-                            {category.symbol} {category.label}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
-
-                  <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handlePickItemImage} disabled={isUploading}>
-                    <Text style={styles.buttonText}>Selecionar Imagem</Text>
-                  </TouchableOpacity>
-
-                  {itemImage ? (
-                    <View style={styles.itemPreviewWrap}>
-                      <Image source={{ uri: itemImage }} style={styles.itemPreview} />
-                      <TouchableOpacity
-                        style={styles.removeImageButton}
-                        onPress={() => {
-                          setItemImage(null);
-                          setItemImageFile(null);
-                          setStatus({ type: 'success', text: 'Imagem removida. O item será salvo sem foto.' });
-                        }}
-                        disabled={isUploading}
-                        accessibilityRole="button"
-                        accessibilityLabel="Remover imagem selecionada"
-                      >
-                        <Text style={styles.removeImageText}>Remover imagem</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-
-                  <TouchableOpacity style={[styles.buttonPrimary, isUploading && styles.buttonDisabled]} onPress={handleAddItem} disabled={isUploading}>
-                    {isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar</Text>}
-                  </TouchableOpacity>
-
-                  {status.text ? (
-                    <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-                  ) : null}
-
-                  <TouchableOpacity style={styles.tabButton} onPress={() => {
-                    setDatePickerField(null);
-                    if (itemType) {
-                      setItemListFilter(itemType);
-                    }
-                    navigateTo('items');
-                  }}>
-                    <Text style={styles.tabText}>Cancelar</Text>
-                  </TouchableOpacity>
-              </View>
-            )}
-
-            {confirmDelete && activeView === 'settings' && (
-              <View style={styles.confirmBox}>
-                <Text style={styles.confirmTitle}>Confirmar exclusão</Text>
-                <Text style={styles.confirmText}>Essa ação apagará sua conta permanentemente. Deseja continuar?</Text>
-                <View style={styles.confirmActions}>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => setConfirmDelete(false)}>
-                    <Text style={styles.cancelButtonText}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.confirmDeleteButton} onPress={handleDeleteAccount}>
-                    <Text style={styles.buttonText}>Excluir</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+                {status.text ? <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text> : null}
               </ScrollView>
               {(isItemListView || showScrollTop) && (
-                <View style={[styles.floatingActions, !isItemListView && styles.floatingActionsEnd]}>
-                  {isItemListView && (
-                    <View style={styles.addMenuContainer}>
-                      <TouchableOpacity
-                        style={styles.floatingAddButton}
-                        onPress={() => {
-                          setItemType('lost');
-                          setPickupError('');
-                          navigateTo('addItem');
-                        }}
-                        disabled={isUploading}
-                        accessibilityRole="button"
-                        accessibilityLabel="Cadastrar item"
-                      >
-                        <Text style={styles.floatingAddButtonText}>+</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  {showScrollTop && (
-                    <TouchableOpacity
-                      style={styles.scrollTopButton}
-                      onPress={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}
-                      accessibilityRole="button"
-                      accessibilityLabel="Voltar ao topo"
-                    >
-                      <Text style={styles.scrollTopText}>↑</Text>
-                    </TouchableOpacity>
-                  )}
+                <View style={styles.floatingActions}>
+                  {isItemListView ? <TouchableOpacity style={styles.floatingAddButton} onPress={() => { setItemType('lost'); navigateTo('addItem'); }}><Text style={styles.floatingAddButtonText}>+</Text></TouchableOpacity> : null}
+                  {showScrollTop ? <TouchableOpacity style={styles.scrollTopButton} onPress={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}><Text style={styles.scrollTopText}>↑</Text></TouchableOpacity> : null}
                 </View>
               )}
               <View style={styles.bottomBar}>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'items' && styles.bottomNavButtonActive]}
-                  onPress={() => { setSelectedCategory('Todas'); navigateTo('items'); }}
+                  onPress={() => navigateTo('items')}
                   accessibilityRole="button"
                   accessibilityState={{ selected: activeNavigationView === 'items' }}
                 >
@@ -2164,11 +1862,7 @@ export default function App() {
                   accessibilityLabel="Perfil"
                   accessibilityState={{ selected: activeNavigationView === 'profile' }}
                 >
-                  <Image
-                    source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE}
-                    style={styles.profileAvatar}
-                    resizeMode="cover"
-                  />
+                  <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileAvatar} resizeMode="cover" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -2188,44 +1882,29 @@ export default function App() {
               <Text style={styles.eyebrow}>COMUNIDADE LOCAL</Text>
               <Text style={styles.authTitle}>Achados e Perdidos</Text>
               <Text style={styles.authIntro}>Um jeito simples de reencontrar o que importa.</Text>
-
               <View style={styles.authModeRow}>
-                <TouchableOpacity style={[styles.authModeButton, screen === 'login' && styles.authModeButtonActive]} onPress={() => setScreen('login')}>
-                  <Text style={[styles.authModeText, screen === 'login' && styles.authModeTextActive]}>Entrar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.authModeButton, screen === 'register' && styles.authModeButtonActive]} onPress={() => setScreen('register')}>
-                  <Text style={[styles.authModeText, screen === 'register' && styles.authModeTextActive]}>Criar conta</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={[styles.authModeButton, screen === 'login' && styles.authModeButtonActive]} onPress={() => setScreen('login')}><Text style={styles.authModeText}>Entrar</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.authModeButton, screen === 'register' && styles.authModeButtonActive]} onPress={() => setScreen('register')}><Text style={styles.authModeText}>Criar conta</Text></TouchableOpacity>
               </View>
-
               {screen === 'login' ? (
                 <View style={styles.formBox}>
                   <Text style={styles.sectionTitle}>Boas-vindas</Text>
-                  <Text style={styles.authFormIntro}>Entre na sua conta para continuar.</Text>
                   <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
                   <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                   <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
-                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}>
-                    <Text style={styles.buttonText}>Entrar</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}><Text style={styles.buttonText}>Entrar</Text></TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.formBox}>
                   <Text style={styles.sectionTitle}>Criar sua conta</Text>
-                  <Text style={styles.authFormIntro}>Leva só um instante para começar.</Text>
-                  <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+                  <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} />
                   <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
                   <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                   <TextInput style={styles.input} placeholder="Senha (mínimo 6 caracteres)" value={password} onChangeText={setPassword} secureTextEntry />
-                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}>
-                    <Text style={styles.buttonText}>Criar conta</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}><Text style={styles.buttonText}>Criar conta</Text></TouchableOpacity>
                 </View>
               )}
-
-              {status.text ? (
-                <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text>
-              ) : null}
+              {status.text ? <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text> : null}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -3058,6 +2737,40 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#6336C8',
   },
+  datePickerPanel: {
+    marginBottom: 14,
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: '#F7F6FA',
+  },
+  datePickerActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  datePickerCancel: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#ECE9F0',
+  },
+  datePickerCancelText: {
+    color: '#24212B',
+    fontWeight: '700',
+  },
+  datePickerConfirm: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#6336C8',
+  },
+  datePickerDoneText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
   categoryFilterIcon: {
     alignItems: 'center',
     gap: 3,
@@ -3249,6 +2962,19 @@ const styles = StyleSheet.create({
   },
   itemTypeBadgeRecovered: {
     backgroundColor: '#E7F0F8',
+  },
+  oldLostBadge: {
+    backgroundColor: '#FFD6D6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  oldLostBadgeText: {
+    color: '#A11A1A',
+    fontSize: 10,
+    fontWeight: '700',
   },
   itemTypeBadgeText: {
     fontSize: 10,

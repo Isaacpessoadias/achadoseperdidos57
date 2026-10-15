@@ -1,35 +1,62 @@
+// Consolidated Firestore security rules for the Achados e Perdidos app.
+
 rules_version = '2';
 
 service cloud.firestore {
+  // ------------------------------------------------------------
+  // Helper: identify a SERVER account (email ends with @ifpe.edu.br
+  // but NOT @discente.ifpe.edu.br). All other authenticated users are
+  // considered STUDENTS.
+  // ------------------------------------------------------------
   function isServer() {
     return request.auth != null
       && request.auth.token.email is string
-      && request.auth.token.email.matches('^[^@]+@ifpe[.]edu[.]br$');
+      && request.auth.token.email.matches('^[^@]+@ifpe\\.edu\\.br$')
+      && !request.auth.token.email.matches('^[^@]+@discente\\.ifpe\\.edu\\.br$');
   }
 
-  match /databases/{database}/documents {
-    // Profile identity is visible to signed-in users; only the owner can write.
-    match /profiles/{userId} {
-      allow read: if request.auth != null
-        && (request.auth.uid == userId || resource.data.keys().hasOnly(['name', 'email', 'photoUrl']));
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-<<<<<<< Updated upstream
-    // Items: signed-in users can read; owners manage items and servers mark losses recovered.
-    match /items/{itemId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null
-        && request.resource.data.userId == request.auth.uid;
-      allow update: if request.auth != null
-        && resource.data.userId == request.auth.uid
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'status', 'recoveredAt', 'recoveredByUid', 'recoveredByName', 'recoveredByEmail', 'recoveredByPhotoUrl'
-        ])
-        || isServer()
-        && resource.data.type == 'lost'
-        && resource.data.get('status', 'active') != 'recovered'
+  // ------------------------------------------------------------
+  // Helper: does the request attempt to modify any administrative
+  // fields that control the lifecycle of an item?
+  // ------------------------------------------------------------
+  function changesItemStatus() {
+    return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+      'type',
+      'foundAtDaeeAt',
+      'foundAtDaeeBy',
+      'status',
+      'recoveredAt',
+      'recoveredByUid',
+      'recoveredByName',
+      'recoveredByEmail',
+      'recoveredByPhotoUrl',
+      'pickedUpBy',
+      'pickedUpAt',
+      'pickupRegisteredBy'
+    ]);
+  }
+
+  // ------------------------------------------------------------
+  // Helper: allowed administrative transitions, only for servers.
+  //   1) lost → found   (type changes, foundAtDaeeAt, foundAtDaeeBy)
+  //   2) found → recovered (type, status, recoveredAt, recoveredBy... )
+  // ------------------------------------------------------------
+  function allowedStatusTransition() {
+    return (
+      // lost → found (any authenticated user)
+      (resource.data.type == 'lost'
+        && request.resource.data.type == 'found'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'recoveredAt', 'recoveredByUid', 'recoveredByName', 'recoveredByEmail', 'recoveredByPhotoUrl'
+          'type', 'foundAtDaeeAt', 'foundAtDaeeBy'
+        ])
+        && request.resource.data.foundAtDaeeAt == request.time
+        && request.resource.data.foundAtDaeeBy == request.auth.uid)
+      // found → recovered (only SERVER accounts)
+      || (isServer()
+        && resource.data.type == 'found'
+        && request.resource.data.type == 'recovered'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'type', 'status', 'recoveredAt', 'recoveredByUid', 'recoveredByName', 'recoveredByEmail', 'recoveredByPhotoUrl'
         ])
         && request.resource.data.status == 'recovered'
         && request.resource.data.recoveredAt == request.time
@@ -40,96 +67,84 @@ service cloud.firestore {
         && request.resource.data.recoveredByEmail == request.auth.token.email
         && request.resource.data.recoveredByPhotoUrl is string
         && request.resource.data.recoveredByName == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('name', '')
-        && request.resource.data.recoveredByPhotoUrl == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('photoUrl', '');
-      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+        && request.resource.data.recoveredByPhotoUrl == get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.get('photoUrl', '')
+      )
+    );
+  }
 
+  match /databases/{database}/documents {
+    // ----------------------------------------------------------------
+    // Profiles – owners can read all profiles, but can only write their own.
+    // ----------------------------------------------------------------
+    match /profiles/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ----------------------------------------------------------------
+    // Items – read for any authenticated user. Creation and administrative
+    // status changes are restricted to SERVER accounts. Owners may edit
+    // non‑status fields.
+    // ----------------------------------------------------------------
+    match /items/{itemId} {
+      allow read: if request.auth != null;
+
+      // CREATE ----------------------------------------------------------
+      // Only SERVER accounts may create items (lost or found).
+      // The creator's UID must match the supplied userId field.
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && (request.resource.data.type == 'lost' || request.resource.data.type == 'found')
+        && isServer();
+
+      // UPDATE ----------------------------------------------------------
+      // • Owners can modify any field *except* the administrative status fields.
+      // • SERVER accounts may perform the defined status transitions.
+      allow update: if request.auth != null && (
+        (resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','description','location','category','eventDateStart','eventDateEnd','imageUrl']))
+        || allowedStatusTransition()
+      );
+
+      // DELETE ----------------------------------------------------------
+      // Only SERVER accounts may delete items.
+      allow delete: if request.auth != null && isServer();
+
+      // ----------------------------------------------------------------
+      // Sub‑collection: recoveryDetails – only SERVER accounts may create the
+      // single "claimant" document, and it is read‑only for everyone else.
+      // ----------------------------------------------------------------
       match /recoveryDetails/{detailId} {
-        allow read: if request.auth != null
-          && (isServer()
-            || get(/databases/$(database)/documents/items/$(itemId)).data.userId == request.auth.uid);
+        allow read: if request.auth != null && (
+          isServer()
+          || get(/databases/$(database)/documents/items/$(itemId)).data.userId == request.auth.uid
+        );
         allow create: if isServer()
           && detailId == 'claimant'
           && request.resource.data.keys().hasOnly(['name', 'class', 'enrollment', 'recordedAt'])
-          && request.resource.data.name is string
-          && request.resource.data.name.size() > 0
-          && request.resource.data.name.size() <= 100
-          && request.resource.data.class is string
-          && request.resource.data.class.size() > 0
-          && request.resource.data.class.size() <= 30
-          && request.resource.data.enrollment is string
-          && request.resource.data.enrollment.size() > 0
-          && request.resource.data.enrollment.size() <= 40
+          && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+          && request.resource.data.class is string && request.resource.data.class.size() > 0 && request.resource.data.class.size() <= 30
+          && request.resource.data.enrollment is string && request.resource.data.enrollment.size() > 0 && request.resource.data.enrollment.size() <= 40
           && request.resource.data.recordedAt == request.time
-          && get(/databases/$(database)/documents/items/$(itemId)).data.type == 'lost'
+          && get(/databases/$(database)/documents/items/$(itemId)).data.type == 'found'
           && get(/databases/$(database)/documents/items/$(itemId)).data.get('status', 'active') != 'recovered';
         allow update, delete: if false;
       }
-=======
 
-    function isServerAccount() {
-      return request.auth != null
-        && request.auth.token.email is string
-        && request.auth.token.email.matches('^[^@]+@([a-z0-9-]+\\.)?ifpe\\.edu\\.br$')
-        && !request.auth.token.email.matches('^[^@]+@discente\\.ifpe\\.edu\\.br$');
-    }
-
-    function isAllowedItemStatusTransition() {
-      return isServerAccount() && (
-        (resource.data.type == 'lost'
-          && request.resource.data.type == 'found'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'type', 'foundAtDaeeAt', 'foundAtDaeeBy'
-          ])
-          && request.resource.data.foundAtDaeeAt == request.time
-          && request.resource.data.foundAtDaeeBy == request.auth.uid)
-        ||
-        (resource.data.type == 'found'
-          && request.resource.data.type == 'recovered'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'type', 'pickedUpBy', 'pickedUpAt', 'pickupRegisteredBy'
-          ])
-          && request.resource.data.pickedUpAt == request.time
-          && request.resource.data.pickupRegisteredBy == request.auth.uid
-          && request.resource.data.pickedUpBy is string
-          && request.resource.data.pickedUpBy.size() > 0
-          && request.resource.data.pickedUpBy.size() <= 100)
-      );
-    }
-
-    function changesItemStatus() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'type', 'foundAtDaeeAt', 'foundAtDaeeBy', 'pickedUpBy', 'pickedUpAt', 'pickupRegisteredBy'
-      ]);
-    }
-
-    // Owners manage item details; only server accounts can change lifecycle fields.
-    match /items/{itemId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null
-        && request.resource.data.userId == request.auth.uid
-        && (request.resource.data.type == 'lost'
-          || (request.resource.data.type == 'found' && isServerAccount()));
-      allow update: if request.auth != null
-        && ((resource.data.userId == request.auth.uid && !changesItemStatus())
-          || isAllowedItemStatusTransition());
-      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
->>>>>>> Stashed changes
-
+      // ----------------------------------------------------------------
+      // Sub‑collection: comments – any authenticated user can read; only the
+      // author can create a comment; only the author can append a single reply.
+      // ----------------------------------------------------------------
       match /comments/{commentId} {
         allow read: if request.auth != null;
         allow create: if request.auth != null
           && request.resource.data.keys().hasOnly(['userId', 'authorName', 'authorPhotoUrl', 'text', 'createdAt'])
           && request.resource.data.userId == request.auth.uid
-          && request.resource.data.authorName is string
-          && request.resource.data.authorName.size() > 0
-          && request.resource.data.authorName.size() <= 100
+          && request.resource.data.authorName is string && request.resource.data.authorName.size() > 0 && request.resource.data.authorName.size() <= 100
           && request.resource.data.authorPhotoUrl is string
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 1000
+          && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 1000
           && request.resource.data.createdAt == request.time;
         allow update: if request.auth != null
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['replies'])
+          && request.resource.data.keys().hasOnly(['replies'])
           && request.resource.data.replies is list
           && request.resource.data.replies.size() == resource.data.get('replies', []).size() + 1
           && request.resource.data.replies.hasAll(resource.data.get('replies', []))
@@ -137,18 +152,19 @@ service cloud.firestore {
             'userId', 'authorName', 'authorPhotoUrl', 'text', 'createdAt'
           ])
           && request.resource.data.replies[request.resource.data.replies.size() - 1].userId == request.auth.uid
-          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName is string
-          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName.size() > 0
-          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName.size() <= 100
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName is string && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName.size() > 0 && request.resource.data.replies[request.resource.data.replies.size() - 1].authorName.size() <= 100
           && request.resource.data.replies[request.resource.data.replies.size() - 1].authorPhotoUrl is string
-          && request.resource.data.replies[request.resource.data.replies.size() - 1].text is string
-          && request.resource.data.replies[request.resource.data.replies.size() - 1].text.size() > 0
-          && request.resource.data.replies[request.resource.data.replies.size() - 1].text.size() <= 1000
+          && request.resource.data.replies[request.resource.data.replies.size() - 1].text is string && request.resource.data.replies[request.resource.data.replies.size() - 1].text.size() > 0 && request.resource.data.replies[request.resource.data.replies.size() - 1].text.size() <= 1000
           && request.resource.data.replies[request.resource.data.replies.size() - 1].createdAt is string;
         allow delete: if false;
       }
     }
 
+    // ----------------------------------------------------------------
+    // Notification requests – created by students to inform the owner that
+    // the lost item was found. Only the creator may write, and the document
+    // must match the schema defined in the app.
+    // ----------------------------------------------------------------
     match /notificationRequests/{requestId} {
       allow create: if request.auth != null
         && request.resource.data.keys().hasOnly([
@@ -168,7 +184,9 @@ service cloud.firestore {
         && request.resource.data.recipientId != request.auth.uid;
     }
 
-    // Collection group queries can only read the signed-in user's comments.
+    // ----------------------------------------------------------------
+    // Collection‑group query – restrict to a user's own comments.
+    // ----------------------------------------------------------------
     match /{path=**}/comments/{commentId} {
       allow read: if request.auth != null && resource.data.userId == request.auth.uid;
     }
