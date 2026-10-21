@@ -3,6 +3,10 @@
 export const theme = {
   // ---- Colors ----
   colors: {
+    // Additional semantic colors for UI consistency
+    outline: '#E5E1EA',
+    surfaceVariant: '#F0EBF8',
+    secondaryText: '#77727F',
     // Primary (purple 500) – used for UI accent, buttons, highlights
     primary: '#6750A4',
     onPrimary: '#FFFFFF',
