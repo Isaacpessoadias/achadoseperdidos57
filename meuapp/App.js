@@ -289,13 +289,21 @@ const uploadImage = async (uri, fileName, webFile) => {
   throw new Error(errorMessage);
 };
 
-const CommentItem = React.memo(function CommentItem({ comment, itemId, user, profileName, profileImage }) {
+const CommentItem = React.memo(function CommentItem({
+  comment,
+  itemId,
+  user,
+  profileName,
+  profileImage,
+  commentProfileImages,
+}) {
   const [isReplying, setIsReplying] = useState(false);
   const [showReplies, setShowReplies] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [replyError, setReplyError] = useState('');
   const replies = Array.isArray(comment.replies) ? comment.replies : [];
+  const currentAuthorPhoto = commentProfileImages[comment.userId] || comment.authorPhotoUrl;
 
   const handleReply = async () => {
     const text = replyText.trim();
@@ -331,7 +339,7 @@ const CommentItem = React.memo(function CommentItem({ comment, itemId, user, pro
     <View style={styles.commentThread}>
       <View style={styles.commentRow}>
         <Image
-          source={comment.authorPhotoUrl ? { uri: comment.authorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+          source={currentAuthorPhoto ? { uri: currentAuthorPhoto } : DEFAULT_PROFILE_IMAGE}
           style={styles.commentAvatar}
           resizeMode="cover"
         />
@@ -386,7 +394,9 @@ const CommentItem = React.memo(function CommentItem({ comment, itemId, user, pro
       {showReplies && replies.map((reply, index) => (
         <View style={styles.replyRow} key={`${reply.userId}-${reply.createdAt}-${index}`}>
           <Image
-            source={reply.authorPhotoUrl ? { uri: reply.authorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
+            source={(commentProfileImages[reply.userId] || reply.authorPhotoUrl)
+              ? { uri: commentProfileImages[reply.userId] || reply.authorPhotoUrl }
+              : DEFAULT_PROFILE_IMAGE}
             style={styles.replyAvatar}
             resizeMode="cover"
           />
@@ -410,7 +420,7 @@ export default function App() {
   const [activeView, setActiveView] = useState('items');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
-  const [showCategoryFilters, setShowCategoryFilters] = useState(false);
+  const [showDateFilters, setShowDateFilters] = useState(false);
   const [filterDateMode, setFilterDateMode] = useState('single');
   const [filterDateStart, setFilterDateStart] = useState('');
   const [filterDateEnd, setFilterDateEnd] = useState('');
@@ -432,6 +442,7 @@ export default function App() {
   const [foundItems, setFoundItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [itemComments, setItemComments] = useState([]);
+  const [commentProfileImages, setCommentProfileImages] = useState({});
   const [loadedCommentsForItemId, setLoadedCommentsForItemId] = useState(null);
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
@@ -484,11 +495,25 @@ export default function App() {
     && Boolean(selectedItem?.id)
     && loadedCommentsForItemId !== selectedItem.id
     && !commentsError;
+  const commentAuthorIdsKey = useMemo(() => {
+    const authorIds = new Set();
+    itemComments.forEach((comment) => {
+      if (typeof comment.userId === 'string' && comment.userId) {
+        authorIds.add(comment.userId);
+      }
+      (Array.isArray(comment.replies) ? comment.replies : []).forEach((reply) => {
+        if (typeof reply.userId === 'string' && reply.userId) {
+          authorIds.add(reply.userId);
+        }
+      });
+    });
+    return JSON.stringify([...authorIds].sort());
+  }, [itemComments]);
 
   const navigateTo = useCallback((view) => {
     setActiveView(view);
     setShowScrollTop(false);
-    setShowCategoryFilters(false);
+    setShowDateFilters(false);
     setFilterDatePickerField(null);
     if (view === 'itemDetail') {
       setCommentsError('');
@@ -542,6 +567,46 @@ export default function App() {
 
     return unsubscribe;
   }, [activeView, selectedItem]);
+
+  useEffect(() => {
+    if (activeView !== 'itemDetail') {
+      setCommentProfileImages({});
+      return undefined;
+    }
+
+    const authorIds = JSON.parse(commentAuthorIdsKey);
+    let isActive = true;
+    setCommentProfileImages({});
+
+    const unsubscribeProfiles = authorIds.map((userId) => onSnapshot(
+      doc(db, 'profiles', userId),
+      (profileSnapshot) => {
+        if (!isActive) {
+          return;
+        }
+        const photoUrl = profileSnapshot.exists() ? profileSnapshot.data().photoUrl : null;
+        setCommentProfileImages((currentImages) => ({
+          ...currentImages,
+          [userId]: typeof photoUrl === 'string' && photoUrl ? photoUrl : null,
+        }));
+      },
+      (error) => {
+        if (!isActive) {
+          return;
+        }
+        console.error('[COMMENT PROFILE LISTENER ERROR]', userId, error);
+        setCommentProfileImages((currentImages) => ({
+          ...currentImages,
+          [userId]: null,
+        }));
+      },
+    ));
+
+    return () => {
+      isActive = false;
+      unsubscribeProfiles.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [activeView, commentAuthorIdsKey]);
 
   useEffect(() => {
     if (activeView !== 'itemDetail' || selectedItem?.status !== 'recovered' || !canViewRecoveryPerson) {
@@ -1438,20 +1503,23 @@ export default function App() {
               accessibilityLabel={`Ver detalhes de ${item.name}, categoria ${normalizeItemCategory(item.category)}`}
             >
               <View style={styles.itemImageWrapper}>
-                ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
-                : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
-              <View style={styles.itemCardContent}>
-                <View style={[styles.itemTypeBadge, statusStyle]}>
-                  <Text style={[styles.itemTypeBadgeText, statusTextStyle]}>{statusLabel}</Text>
+                {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
+                  : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
+                <View style={[styles.itemTypeBadge, statusStyle, styles.itemTypeBadgeOverlay]}>
+                  <Text style={[styles.itemTypeBadgeText, statusTextStyle]} numberOfLines={1}>{statusLabel}</Text>
+                </View>
+                <View style={[styles.itemCategoryBadge, styles.itemCategoryBadgeOverlay]}>
+                  <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
+                    {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
+                  </Text>
                 </View>
                 {oldItemLabel ? (
-                  <View style={styles.oldItemBadge}>
+                  <View style={[styles.oldItemBadge, styles.oldItemBadgeOverlay]}>
                     <Text style={styles.oldItemBadgeText}>{oldItemLabel}</Text>
                   </View>
                 ) : null}
-                <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
-                  {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
-                </Text>
+              </View>
+              <View style={styles.itemCardContent}>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
                 <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
                 {itemDateLabel ? <Text style={styles.itemDate} numberOfLines={1}>Data: {itemDateLabel}</Text> : null}
@@ -1515,21 +1583,30 @@ export default function App() {
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
+                    <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                      {categoryOptions.map((category) => (
+                        <TouchableOpacity key={category} style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]} onPress={() => setSelectedCategory(category)}>
+                          <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
                     <View style={styles.searchBox}>
                       <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
-                      <TouchableOpacity style={styles.categoryFilterButton} onPress={() => setShowCategoryFilters((value) => !value)}>
+                      <TouchableOpacity
+                        style={[styles.categoryFilterButton, showDateFilters && styles.categoryFilterButtonActive]}
+                        onPress={() => {
+                          if (showDateFilters) {
+                            setFilterDatePickerField(null);
+                          }
+                          setShowDateFilters(!showDateFilters);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={showDateFilters ? 'Ocultar filtros de data' : 'Mostrar filtros de data'}
+                      >
                         <Text>☷</Text>
                       </TouchableOpacity>
                     </View>
-                    {showCategoryFilters && (
-                      <>
-                        <ScrollView horizontal contentContainerStyle={styles.categoryRow}>
-                          {categoryOptions.map((category) => (
-                            <TouchableOpacity key={category} style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]} onPress={() => setSelectedCategory(category)}>
-                              <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
+                    {showDateFilters && (
                         <View style={styles.dateFilterPanel}>
                           <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
                           <View style={styles.authModeRow}>
@@ -1601,7 +1678,6 @@ export default function App() {
                             </TouchableOpacity>
                           ) : null}
                         </View>
-                      </>
                     )}
                     <View style={styles.sectionHeading}>
                       <Text style={styles.sectionHeadingTitle}>{itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}</Text>
@@ -1717,7 +1793,7 @@ export default function App() {
                           {isSubmittingComment ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Comentar</Text>}
                         </TouchableOpacity>
                         {!isLoadingComments && !itemComments.length && !commentsError ? <Text style={styles.emptyComments}>Ainda não há comentários. Comece a conversa.</Text> : null}
-                        {itemComments.map((comment) => <CommentItem key={comment.id} comment={comment} itemId={selectedItem.id} user={user} profileName={profileName} profileImage={profileImage} />)}
+                        {itemComments.map((comment) => <CommentItem key={comment.id} comment={comment} itemId={selectedItem.id} user={user} profileName={profileName} profileImage={profileImage} commentProfileImages={commentProfileImages} />)}
                       </View>
                     </View>
                   </View>
@@ -2218,6 +2294,7 @@ const styles = StyleSheet.create({
     minHeight: 38,
     paddingHorizontal: 12,
     paddingVertical: theme.spacing.sm,
+    marginTop: theme.spacing.md,
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2427,7 +2504,6 @@ const styles = StyleSheet.create({
   itemImage: {
     width: '100%',
     height: 180,
-    borderRadius: theme.shape.large,
     marginBottom: 14,
   },
 
@@ -2733,8 +2809,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.background,
+    borderWidth: 2,
+    borderColor: theme.colors.primary,
     borderRadius: 15,
     paddingHorizontal: 14,
     marginBottom: 14,
@@ -2932,6 +3008,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#E5E3E8',
+  },
+  itemImageWrapper: {
+    position: 'relative',
+  },
+  itemTypeBadgeOverlay: {
+    position: 'absolute',
+    top: theme.spacing.sm,
+    left: theme.spacing.sm,
+    zIndex: 1,
+    maxWidth: '45%',
+    marginBottom: 0,
+  },
+  itemCategoryBadgeOverlay: {
+    position: 'absolute',
+    top: theme.spacing.sm,
+    right: theme.spacing.sm,
+    zIndex: 1,
+    maxWidth: '45%',
+    marginBottom: 0,
+  },
+  oldItemBadgeOverlay: {
+    position: 'absolute',
+    bottom: theme.spacing.sm,
+    alignSelf: 'center',
+    zIndex: 1,
+    maxWidth: '90%',
+    marginTop: 0,
   },
   placeholderMark: {
     color: '#77727F',
