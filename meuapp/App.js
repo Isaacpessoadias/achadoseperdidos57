@@ -1,4 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import ButtonPrimary from './src/components/ButtonPrimary';
+import TextField from './src/components/TextField';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@expo/ui/community/datetime-picker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { theme } from './src/theme';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
@@ -976,8 +979,8 @@ export default function App() {
           padding: '13px 14px',
           border: '1px solid #E5E1EA',
           borderRadius: '12px',
-          backgroundColor: '#FFFFFF',
-          color: '#24212B',
+          backgroundColor: theme.colors.surface,
+          color: theme.colors.onSurface,
           fontSize: '16px',
         },
       });
@@ -1041,8 +1044,8 @@ export default function App() {
           padding: '13px 14px',
           border: '1px solid #E5E1EA',
           borderRadius: '12px',
-          backgroundColor: '#FFFFFF',
-          color: '#24212B',
+          backgroundColor: theme.colors.surface,
+          color: theme.colors.onSurface,
           fontSize: '16px',
         },
       });
@@ -1434,7 +1437,7 @@ export default function App() {
               accessibilityRole="button"
               accessibilityLabel={`Ver detalhes de ${item.name}, categoria ${normalizeItemCategory(item.category)}`}
             >
-              {item.imageUrl
+              <View style={styles.itemImageWrapper}>
                 ? <Image source={{ uri: item.imageUrl }} style={styles.itemImage} resizeMode="cover" />
                 : <View style={styles.itemImagePlaceholder}><Text style={styles.placeholderMark}>◎</Text></View>}
               <View style={styles.itemCardContent}>
@@ -1450,30 +1453,8 @@ export default function App() {
                   {getCategoryOption(item.category).symbol} {normalizeItemCategory(item.category)}
                 </Text>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
-                <Text style={styles.cardText} numberOfLines={2}>{item.description}</Text>
                 <Text style={styles.itemLocation} numberOfLines={1}>{item.location}</Text>
-                {item.status === 'recovered' ? (
-                  <>
-                    <Text style={styles.recoveredTag}>RECUPERADO</Text>
-                    <Text style={styles.cardText}>Recuperado em: {formatDateTime(item.recoveredAt)}</Text>
-                    <Text style={styles.cardText}>Recuperado por: {item.recoveredByName || 'Servidor'}</Text>
-                  </>
-                ) : null}
                 {itemDateLabel ? <Text style={styles.itemDate} numberOfLines={1}>Data: {itemDateLabel}</Text> : null}
-                {statusDetail ? <Text style={styles.itemDate} numberOfLines={2}>{statusDetail}</Text> : null}
-                <View style={styles.itemCreatorRow}>
-                  <Image
-                    source={item.creatorPhotoUrl ? { uri: item.creatorPhotoUrl } : DEFAULT_PROFILE_IMAGE}
-                    style={styles.itemCreatorAvatar}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.itemCreatorText}>
-                    <Text style={styles.itemCreatorName} numberOfLines={1}>{item.creatorName || 'Autor não informado'}</Text>
-                    <Text style={styles.itemCreatorEmail} numberOfLines={1}>
-                      {formatDisplayEmail(item.creatorEmail) || 'E-mail indisponível'}
-                    </Text>
-                  </View>
-                </View>
               </View>
             </TouchableOpacity>
           );
@@ -1802,13 +1783,7 @@ export default function App() {
                         {editingProfileField === 'email' ? <TextInput style={styles.input} placeholder="Novo e-mail" value={profileEmailDraft} onChangeText={setProfileEmailDraft} /> : null}
                         {editingProfileField === 'password' ? <TextInput style={styles.input} placeholder="Nova senha" value={newPassword} onChangeText={setNewPassword} secureTextEntry /> : null}
                         {editingProfileField !== 'name' ? <TextInput style={styles.input} placeholder="Senha atual" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry /> : null}
-                        <TouchableOpacity
-                          style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]}
-                          onPress={handleSaveProfileField}
-                          disabled={isSavingProfile}
-                        >
-                          {isSavingProfile ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar alteração</Text>}
-                        </TouchableOpacity>
+        <ButtonPrimary onPress={handleSaveProfileField} style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]} disabled={isSavingProfile}> {isSavingProfile ? <ActivityIndicator color="#fff" /> : 'Salvar alteração'} </ButtonPrimary>
                       </View>
                     ) : null}
                     <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}><Text style={styles.buttonLogoutText}>Sair da conta</Text></TouchableOpacity>
@@ -1905,7 +1880,7 @@ export default function App() {
                         {ITEM_CATEGORIES.map((category) => <TouchableOpacity key={category.label} style={styles.categoryOption} onPress={() => { setItemCategory(category.label); setShowCategoryOptions(false); }}><Text>{category.symbol} {category.label}</Text></TouchableOpacity>)}
                       </View>
                     ) : null}
-                    <TouchableOpacity style={styles.buttonPrimary} onPress={handlePickItemImage} disabled={isUploading}><Text style={styles.buttonText}>Selecionar imagem</Text></TouchableOpacity>
+                    <ButtonPrimary onPress={handlePickItemImage} disabled={isUploading} style={styles.buttonPrimary}>Selecionar imagem</ButtonPrimary>
                     {itemImage ? (
                       <View style={styles.itemPreviewWrap}>
                         <Image source={{ uri: itemImage }} style={styles.itemPreview} />
@@ -1914,7 +1889,7 @@ export default function App() {
                         </TouchableOpacity>
                       </View>
                     ) : null}
-                    <TouchableOpacity style={styles.buttonPrimary} onPress={handleAddItem} disabled={isUploading}>{isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Salvar</Text>}</TouchableOpacity>
+                    <ButtonPrimary onPress={handleAddItem} disabled={isUploading} style={styles.buttonPrimary}>{isUploading ? <ActivityIndicator color="#fff" /> : 'Salvar'}</ButtonPrimary>
                   </View>
                 )}
                 {status.text ? <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text> : null}
@@ -1968,19 +1943,19 @@ export default function App() {
               {screen === 'login' ? (
                 <View style={styles.formBox}>
                   <Text style={styles.sectionTitle}>Boas-vindas</Text>
-                  <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <TextField style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="words" />
                   <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
-                  <TextInput style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
-                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleLogin}><Text style={styles.buttonText}>Entrar</Text></TouchableOpacity>
+                  <TextField style={styles.input} placeholder="Senha" value={password} onChangeText={setPassword} secureTextEntry />
+                  <ButtonPrimary onPress={handleLogin} style={styles.buttonPrimary}>Entrar</ButtonPrimary>
                 </View>
               ) : (
                 <View style={styles.formBox}>
                   <Text style={styles.sectionTitle}>Criar sua conta</Text>
-                  <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} />
-                  <TextInput style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
+                  <TextInput style={styles.input} placeholder="Nome completo" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
+                  <TextField style={styles.input} placeholder="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="words" />
                   <Text style={styles.authHint}>{ACCOUNT_DOMAIN_HINT}</Text>
                   <TextInput style={styles.input} placeholder="Senha (mínimo 6 caracteres)" value={password} onChangeText={setPassword} secureTextEntry />
-                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleRegister}><Text style={styles.buttonText}>Criar conta</Text></TouchableOpacity>
+                  <ButtonPrimary onPress={handleRegister} style={styles.buttonPrimary}>Criar conta</ButtonPrimary>
                 </View>
               )}
               {status.text ? <Text style={[styles.message, status.type === 'error' ? styles.errorText : styles.successText]}>{status.text}</Text> : null}
@@ -1995,21 +1970,21 @@ export default function App() {
 const styles = StyleSheet.create({
   appShell: {
     flex: 1,
-    backgroundColor: '#F7F6FA',
+    backgroundColor: theme.colors.background,
   },
   screenScroll: {
     flex: 1,
   },
   safeArea: {
     flex: 1,
-    backgroundColor: '#F7F6FA',
+    backgroundColor: theme.colors.background,
   },
   container: {
     flexGrow: 1,
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 28,
-    backgroundColor: '#F7F6FA',
+    backgroundColor: theme.colors.background,
   },
   containerWithFloatingActions: {
     paddingBottom: 104,
@@ -2018,29 +1993,29 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: 22,
-    paddingVertical: 32,
-    backgroundColor: '#F7F6FA',
+    paddingVertical: theme.spacing.xl,
+    backgroundColor: theme.colors.background,
   },
   authContent: {
     width: '100%',
     maxWidth: 460,
     alignSelf: 'center',
   },
-  authTitle: {
-    color: '#24212B',
-    fontSize: 30,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
+    authTitle: {
+      color: theme.colors.onSurface,
+      fontSize: 30,
+      fontWeight: '800',
+      marginBottom: 6,
+    },
   authIntro: {
     color: '#77727F',
     fontSize: 15,
     lineHeight: 22,
-    marginBottom: 24,
+    marginBottom: theme.spacing.lg,
   },
   authFormIntro: {
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     marginTop: -10,
     marginBottom: 18,
   },
@@ -2049,38 +2024,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#ECE9F0',
     borderRadius: 15,
-    padding: 4,
-    marginBottom: 16,
+    padding: theme.spacing.xs,
+    marginBottom: theme.spacing.md,
   },
   authModeButton: {
     flex: 1,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
   },
   authModeButtonActive: {
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   authModeText: {
     color: '#77727F',
     fontWeight: '700',
   },
   authModeTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.surface,
   },
   backButton: {
     alignSelf: 'flex-start',
     width: 42,
     height: 42,
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F0EBF8',
     marginBottom: 12,
   },
   backButtonText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 25,
     lineHeight: 28,
   },
@@ -2108,22 +2083,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0EBF8',
   },
   changeImageText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 13,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
   },
   title: {
     fontSize: 28,
     fontWeight: '800',
     textAlign: 'left',
     marginBottom: 18,
-    color: '#24212B',
+    color: theme.colors.onSurface,
   },
   tabButton: {
     flex: 1,
     minHeight: 40,
-    borderRadius: 8,
+    borderRadius: theme.shape.medium,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2134,7 +2109,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   formBox: {
-    backgroundColor: '#ffffff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 18,
     padding: 22,
     borderWidth: 1,
@@ -2145,21 +2120,21 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   sectionTitle: {
-    fontSize: 22,
+    fontSize: theme.typography.titleLarge.fontSize,
     fontWeight: '800',
     marginBottom: 18,
-    color: '#24212B',
+    color: theme.colors.onSurface,
   },
   input: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: '#E5E1EA',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
     paddingHorizontal: 14,
     paddingVertical: 13,
     marginBottom: 14,
-    fontSize: 16,
-    color: '#24212B',
+    fontSize: theme.typography.bodyLarge.fontSize,
+    color: theme.colors.onSurface,
   },
   authHint: {
     marginTop: -8,
@@ -2173,15 +2148,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 13,
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
     backgroundColor: '#f8fbf9',
     borderWidth: 1,
     borderColor: '#E5E1EA',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
   },
   categoryPickerText: {
-    fontSize: 16,
-    color: '#24212B',
+    fontSize: theme.typography.bodyLarge.fontSize,
+    color: theme.colors.onSurface,
   },
   categoryPlaceholder: {
     color: '#7b9187',
@@ -2189,10 +2164,10 @@ const styles = StyleSheet.create({
   categoryOptions: {
     marginBottom: 14,
     overflow: 'hidden',
-    backgroundColor: '#ffffff',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: '#E5E1EA',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
   },
   categoryOption: {
     minHeight: 44,
@@ -2210,30 +2185,30 @@ const styles = StyleSheet.create({
     color: '#77727F',
   },
   categoryOptionTextSelected: {
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontWeight: '700',
   },
   buttonPrimary: {
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
     borderRadius: 14,
     minHeight: 48,
     paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
     marginBottom: 18,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonLogout: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderRadius: 14,
     minHeight: 48,
     paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 24,
+    marginTop: theme.spacing.lg,
     borderWidth: 1,
     borderColor: '#E8E4EC',
   },
@@ -2242,7 +2217,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     minHeight: 38,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: theme.spacing.sm,
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2250,32 +2225,32 @@ const styles = StyleSheet.create({
   accountActions: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 8,
+    marginTop: theme.spacing.sm,
   },
   editAccountButton: {
     minHeight: 42,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
     borderRadius: 10,
     backgroundColor: '#F0EBF8',
   },
   editAccountButtonText: {
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontWeight: '700',
     textAlign: 'center',
   },
   accountEditForm: {
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
   },
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 68,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#ffffff',
+    paddingVertical: theme.spacing.sm,
+    backgroundColor: theme.colors.surface,
     borderTopWidth: 1,
     borderTopColor: '#E8E4EC',
   },
@@ -2295,29 +2270,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 26,
-    backgroundColor: '#6336C8',
-    elevation: 4,
+    backgroundColor: theme.colors.primary,
+    elevation: theme.elevation.medium,
   },
   floatingAddButtonText: {
-    color: '#ffffff',
+    color: theme.colors.surface,
     fontSize: 28,
     fontWeight: '700',
     lineHeight: 32,
     textAlign: 'center',
   },
   scrollTopButton: {
-    width: 38,
-    height: 38,
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 19,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: '#E5E1EA',
-    backgroundColor: '#ffffff',
-    elevation: 4,
+    backgroundColor: theme.colors.surface,
+    elevation: theme.elevation.medium,
   },
   scrollTopText: {
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontSize: 23,
     fontWeight: '700',
     lineHeight: 28,
@@ -2330,8 +2305,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    paddingHorizontal: 8,
-    borderRadius: 12,
+    paddingHorizontal: theme.spacing.sm,
+    borderRadius: theme.shape.large,
   },
   bottomNavButtonActive: {
     backgroundColor: '#F0EBF8',
@@ -2343,7 +2318,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   bottomNavTextActive: {
-    color: '#24212B',
+    color: theme.colors.onSurface,
   },
   profileNavButton: {
     flex: 1.3,
@@ -2359,7 +2334,7 @@ const styles = StyleSheet.create({
   },
   userText: {
     fontSize: 18,
-    color: '#24212B',
+    color: theme.colors.onSurface,
     textAlign: 'center',
     fontWeight: '600',
     marginBottom: 20,
@@ -2371,15 +2346,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: theme.spacing.sm,
   },
   replyButton: {
     minHeight: 32,
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: theme.spacing.sm,
   },
   replyButtonText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -2387,16 +2362,16 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     minHeight: 36,
     justifyContent: 'center',
-    paddingRight: 8,
+    paddingRight: theme.spacing.sm,
   },
   showRepliesText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 13,
     fontWeight: '700',
   },
   replyComposer: {
     marginLeft: 48,
-    marginTop: 8,
+    marginTop: theme.spacing.sm,
   },
   replyInput: {
     minHeight: 68,
@@ -2405,9 +2380,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E1EA',
     borderRadius: 9,
-    backgroundColor: '#ffffff',
-    color: '#24212B',
-    fontSize: 14,
+    backgroundColor: theme.colors.surface,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.labelMedium.fontSize,
   },
   replySubmitButton: {
     minHeight: 40,
@@ -2415,7 +2390,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 7,
     borderRadius: 9,
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   replyRow: {
     flexDirection: 'row',
@@ -2434,25 +2409,25 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#24212B',
-    marginBottom: 8,
+    color: theme.colors.onSurface,
+    marginBottom: theme.spacing.sm,
   },
   cardText: {
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     color: '#77727F',
     lineHeight: 21,
   },
   listDescription: {
     marginTop: -8,
-    marginBottom: 16,
+    marginBottom: theme.spacing.md,
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     lineHeight: 21,
   },
   itemImage: {
     width: '100%',
     height: 180,
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
     marginBottom: 14,
   },
 
@@ -2464,7 +2439,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   detailBackText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -2484,27 +2459,27 @@ const styles = StyleSheet.create({
   },
   detailPlaceholderText: {
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
   },
   detailInformation: {
     paddingTop: 20,
     paddingBottom: 24,
   },
   detailType: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 12,
     fontWeight: '800',
   },
   detailTitle: {
     marginTop: 5,
     marginBottom: 10,
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontSize: 26,
     fontWeight: '800',
   },
   detailDescription: {
     color: '#77727F',
-    fontSize: 16,
+    fontSize: theme.typography.bodyLarge.fontSize,
     lineHeight: 24,
   },
   detailDivider: {
@@ -2521,12 +2496,12 @@ const styles = StyleSheet.create({
   },
   detailValue: {
     marginTop: 3,
-    color: '#24212B',
-    fontSize: 16,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.bodyLarge.fontSize,
   },
   recoveredTag: {
     alignSelf: 'flex-start',
-    marginTop: 8,
+    marginTop: theme.spacing.sm,
     marginBottom: 5,
     paddingHorizontal: 9,
     paddingVertical: 5,
@@ -2542,7 +2517,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 10,
     borderRadius: 10,
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   recoveredButton: {
     minHeight: 48,
@@ -2553,13 +2528,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#205c3b',
   },
   recoveryForm: {
-    marginBottom: 16,
+    marginBottom: theme.spacing.md,
   },
   recoveredPersonDetails: {
     marginTop: 12,
   },
   recoveredPersonMeta: {
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
     color: '#77727F',
     fontSize: 15,
   },
@@ -2596,15 +2571,15 @@ const styles = StyleSheet.create({
     borderTopColor: '#E8E4EC',
   },
   commentsTitle: {
-    marginBottom: 16,
-    color: '#24212B',
+    marginBottom: theme.spacing.md,
+    color: theme.colors.onSurface,
     fontSize: 21,
     fontWeight: '800',
   },
   emptyComments: {
-    marginBottom: 16,
+    marginBottom: theme.spacing.md,
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     lineHeight: 21,
   },
   commentRow: {
@@ -2613,10 +2588,10 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   commentAvatar: {
-    width: 38,
-    height: 38,
+    width: 48,
+    height: 48,
     marginRight: 11,
-    borderRadius: 19,
+    borderRadius: 24,
     backgroundColor: '#F0EBF8',
   },
   commentContent: {
@@ -2625,25 +2600,26 @@ const styles = StyleSheet.create({
   },
   commentAuthor: {
     marginBottom: 3,
-    color: '#24212B',
-    fontSize: 14,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.labelMedium.fontSize,
     fontWeight: '700',
   },
   commentText: {
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     lineHeight: 21,
   },
   commentInput: {
+    textAlignVertical: 'top',
     minHeight: 88,
     maxHeight: 160,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderWidth: 1,
     borderColor: '#E5E1EA',
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    color: '#24212B',
+    borderRadius: theme.shape.large,
+    backgroundColor: theme.colors.surface,
+    color: theme.colors.onSurface,
     fontSize: 15,
   },
   commentSubmitButton: {
@@ -2651,25 +2627,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
+    marginBottom: theme.spacing.sm,
     borderRadius: 10,
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   itemPreview: {
     width: 112,
     height: 112,
     borderRadius: 14,
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
     marginBottom: 14,
     alignSelf: 'center',
   },
   message: {
     marginTop: 16,
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     textAlign: 'center',
     fontWeight: '600',
   },
   errorText: {
-    color: '#B42318',
+    color: theme.colors.error,
   },
   successText: {
     color: '#26734D',
@@ -2685,8 +2662,8 @@ const styles = StyleSheet.create({
   confirmTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: '#24212B',
-    marginBottom: 8,
+    color: theme.colors.onSurface,
+    marginBottom: theme.spacing.sm,
   },
   confirmText: {
     color: '#77727F',
@@ -2694,12 +2671,12 @@ const styles = StyleSheet.create({
   },
   confirmActions: {
     flexDirection: 'row',
-    gap: 8,
+    gap: theme.spacing.sm,
   },
   cancelButton: {
     flex: 1,
     backgroundColor: '#F0EBF8',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
     minHeight: 46,
     paddingVertical: 12,
     alignItems: 'center',
@@ -2712,8 +2689,8 @@ const styles = StyleSheet.create({
   },
   confirmDeleteButton: {
     flex: 1,
-    backgroundColor: '#B42318',
-    borderRadius: 12,
+    backgroundColor: theme.colors.error,
+    borderRadius: theme.shape.large,
     minHeight: 46,
     paddingVertical: 12,
     alignItems: 'center',
@@ -2722,16 +2699,16 @@ const styles = StyleSheet.create({
   },
   addMenuContainer: {
     alignItems: 'flex-end',
-    gap: 8,
+    gap: theme.spacing.sm,
   },
   addMenu: {
     minWidth: 176,
     padding: 6,
     borderWidth: 1,
     borderColor: '#E8E4EC',
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    elevation: 4,
+    borderRadius: theme.shape.medium,
+    backgroundColor: theme.colors.surface,
+    elevation: theme.elevation.medium,
   },
   addMenuOption: {
     minHeight: 42,
@@ -2740,12 +2717,12 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   addMenuOptionText: {
-    color: '#24212B',
-    fontSize: 14,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.labelMedium.fontSize,
     fontWeight: '600',
   },
   eyebrow: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 11,
     fontWeight: '800',
     marginBottom: 6,
@@ -2755,9 +2732,9 @@ const styles = StyleSheet.create({
     minHeight: 54,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
-    borderColor: '#E7E2EC',
+    borderColor: theme.colors.background,
     borderRadius: 15,
     paddingHorizontal: 14,
     marginBottom: 14,
@@ -2776,25 +2753,25 @@ const styles = StyleSheet.create({
   dateFilterPanel: {
     marginBottom: 14,
     padding: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: '#E7E2EC',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
   },
   dateFilterHeader: {
     minHeight: 32,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
   },
   dateFilterTitle: {
-    color: '#24212B',
-    fontSize: 14,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.labelMedium.fontSize,
     fontWeight: '700',
   },
   dateFilterClear: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -2806,36 +2783,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 8,
     borderRadius: 10,
-    backgroundColor: '#F7F6FA',
+    backgroundColor: theme.colors.background,
   },
   filterDatePickerDone: {
     minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'stretch',
-    borderRadius: 8,
-    backgroundColor: '#6336C8',
+    borderRadius: theme.shape.medium,
+    backgroundColor: theme.colors.primary,
   },
   datePickerPanel: {
     marginBottom: 14,
     padding: 8,
     borderRadius: 10,
-    backgroundColor: '#F7F6FA',
+    backgroundColor: theme.colors.background,
   },
   datePickerActions: {
     flexDirection: 'row',
-    gap: 8,
+    gap: theme.spacing.sm,
   },
   datePickerCancel: {
     flex: 1,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
+    borderRadius: theme.shape.medium,
     backgroundColor: '#ECE9F0',
   },
   datePickerCancelText: {
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontWeight: '700',
   },
   datePickerConfirm: {
@@ -2843,11 +2820,11 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 8,
-    backgroundColor: '#6336C8',
+    borderRadius: theme.shape.medium,
+    backgroundColor: theme.colors.primary,
   },
   datePickerDoneText: {
-    color: '#FFFFFF',
+    color: theme.colors.surface,
     fontWeight: '700',
   },
   categoryFilterIcon: {
@@ -2869,7 +2846,7 @@ const styles = StyleSheet.create({
     width: 6,
   },
   categoryFilterMarkActive: {
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   searchMark: {
     color: '#77727F',
@@ -2877,21 +2854,22 @@ const styles = StyleSheet.create({
     marginRight: 9,
   },
   searchInput: {
+    textAlignVertical: 'center',
     flex: 1,
     minHeight: 50,
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontSize: 15,
   },
   clearSearch: {
     color: '#77727F',
-    fontSize: 24,
+    fontSize: theme.typography.headlineMedium.fontSize,
     paddingHorizontal: 4,
   },
   categoryRow: {
     height: 48,
     flexGrow: 0,
     alignItems: 'center',
-    gap: 8,
+    gap: theme.spacing.sm,
   },
   categoryFilterScroll: {
     height: 58,
@@ -2909,7 +2887,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECE9F0',
   },
   categoryChipActive: {
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   categoryChipText: {
     color: '#68636F',
@@ -2917,16 +2895,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   categoryChipTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.surface,
   },
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
   },
   sectionHeadingTitle: {
-    color: '#24212B',
+    color: theme.colors.onSurface,
     fontSize: 17,
     fontWeight: '700',
   },
@@ -2942,10 +2920,10 @@ const styles = StyleSheet.create({
   itemCard: {
     width: '48.5%',
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: '#E8E4EC',
-    borderRadius: 8,
+    borderRadius: theme.shape.medium,
     marginBottom: 12,
   },
   itemImagePlaceholder: {
@@ -2960,7 +2938,7 @@ const styles = StyleSheet.create({
     fontSize: 36,
   },
   itemCardContent: {
-    padding: 10,
+    padding: 6,
   },
   itemCreatorRow: {
     flexDirection: 'row',
@@ -3010,8 +2988,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   creatorLabel: {
-    color: '#89848F',
-    fontSize: 11,
+    marginTop: 10,
+    color: '#77727F',
+    fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
@@ -3028,10 +3007,10 @@ const styles = StyleSheet.create({
   },
   itemTypeBadge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 8,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 4,
     borderRadius: 10,
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
   },
   itemTypeBadgeLost: {
     backgroundColor: '#FFF0ED',
@@ -3046,9 +3025,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFD6D6',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 8,
+    borderRadius: theme.shape.medium,
     alignSelf: 'flex-start',
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
   },
   oldItemBadgeText: {
     color: '#A11A1A',
@@ -3071,40 +3050,40 @@ const styles = StyleSheet.create({
   itemCategoryBadge: {
     alignSelf: 'flex-start',
     maxWidth: '100%',
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 6,
     backgroundColor: '#ECE9F0',
   },
   itemCategoryBadgeText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 10,
     fontWeight: '700',
   },
   itemLocation: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 11,
     marginTop: 7,
   },
   itemDate: {
     color: '#68636F',
     fontSize: 11,
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
   },
   emptyState: {
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.shape.large,
     padding: 28,
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
     borderWidth: 1,
     borderColor: '#E9E5EF',
   },
   emptyStateMark: {
     color: '#77727F',
     fontSize: 38,
-    marginBottom: 8,
+    marginBottom: theme.spacing.sm,
   },
   profileScreen: {
     flex: 1,
@@ -3129,22 +3108,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   profileTypeTitle: {
-    marginBottom: 16,
-    color: '#24212B',
+    marginBottom: theme.spacing.md,
+    color: theme.colors.onSurface,
     fontSize: 18,
     fontWeight: '700',
     textAlign: 'center',
   },
   profileEmail: {
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     marginTop: 0,
     marginBottom: 10,
     textAlign: 'center',
   },
   myItemsFilterRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: theme.spacing.sm,
     marginTop: 10,
     marginBottom: 14,
   },
@@ -3154,10 +3133,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ECE9F0',
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
   },
   myItemsFilterActive: {
-    backgroundColor: '#6336C8',
+    backgroundColor: theme.colors.primary,
   },
   myItemsFilterText: {
     color: '#68636F',
@@ -3165,7 +3144,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   myItemsFilterTextActive: {
-    color: '#FFFFFF',
+    color: theme.colors.surface,
   },
   profileAction: {
     width: '100%',
@@ -3173,7 +3152,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: '#E8E4EC',
     borderRadius: 14,
@@ -3188,14 +3167,14 @@ const styles = StyleSheet.create({
   profileActionSubtitle: {
     color: '#77727F',
     fontSize: 12,
-    marginTop: 4,
+    marginTop: theme.spacing.xs,
   },
   actionArrow: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 28,
   },
   settingsSection: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E8E4EC',
@@ -3216,12 +3195,12 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   settingsEditLabel: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 13,
     fontWeight: '700',
   },
   profileEditForm: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E8E4EC',
@@ -3230,7 +3209,7 @@ const styles = StyleSheet.create({
   },
   cancelEditText: {
     color: '#77727F',
-    fontSize: 14,
+    fontSize: theme.typography.labelMedium.fontSize,
     fontWeight: '700',
     textAlign: 'center',
     paddingVertical: 10,
@@ -3250,12 +3229,12 @@ const styles = StyleSheet.create({
     marginVertical: 8,
   },
   buttonLogoutText: {
-    color: '#6336C8',
+    color: theme.colors.primary,
     fontSize: 15,
     fontWeight: '700',
   },
   buttonDeleteText: {
-    color: '#B42318',
+    color: theme.colors.error,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -3266,13 +3245,13 @@ const styles = StyleSheet.create({
   removeImageButton: {
     minHeight: 38,
     paddingHorizontal: 14,
-    borderRadius: 12,
+    borderRadius: theme.shape.large,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFF0ED',
   },
   removeImageText: {
-    color: '#B42318',
+    color: theme.colors.error,
     fontSize: 13,
     fontWeight: '700',
   },
