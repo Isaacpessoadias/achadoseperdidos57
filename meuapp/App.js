@@ -153,22 +153,33 @@ const formatItemTimestamp = (value) => {
   return Number.isNaN(date.getTime()) ? 'Não informada' : date.toLocaleString('pt-BR');
 };
 
-// Helper: returns true if the item is a lost item and its creation date is older than 60 days.
-const isOldLost = (createdAt) => {
-  if (!createdAt) return false;
-  let date;
-  if (typeof createdAt?.toDate === 'function') {
-    date = createdAt.toDate();
-  } else if (typeof createdAt === 'string' || createdAt instanceof Date) {
-    date = new Date(createdAt);
-  } else {
-    return false;
+const getTimestampMillis = (value) => {
+  if (typeof value?.toMillis === 'function') {
+    return value.toMillis();
   }
-  if (Number.isNaN(date.getTime())) return false;
-  const now = new Date();
-  const diffMs = now - date;
-  const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
-  return diffMs > SIXTY_DAYS_MS;
+  const date = typeof value?.toDate === 'function'
+    ? value.toDate()
+    : value instanceof Date || typeof value === 'string'
+      ? new Date(value)
+      : null;
+  return date && !Number.isNaN(date.getTime()) ? date.getTime() : null;
+};
+
+const getOldItemLabel = (item, now = Date.now()) => {
+  if (item.status === 'recovered' || item.type === 'recovered') {
+    return null;
+  }
+
+  const type = item.type || 'found';
+  const timestamp = getTimestampMillis(
+    type === 'lost' ? item.createdAt : item.foundAtDaeeAt || item.createdAt,
+  );
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  if (timestamp === null || now - timestamp < ONE_WEEK_MS) {
+    return null;
+  }
+
+  return type === 'lost' ? 'Perdido há muito tempo' : 'Achado há muito tempo';
 };
 const toStoredDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const fromStoredDate = (value) => {
@@ -404,6 +415,8 @@ export default function App() {
   const [filterDateDraft, setFilterDateDraft] = useState(new Date());
   const [myItemFilter, setMyItemFilter] = useState('all');
   const [itemListFilter, setItemListFilter] = useState('lost');
+  const [oldItemFilter, setOldItemFilter] = useState('all');
+  const [currentTime, setCurrentTime] = useState(0);
   const [profileImage, setProfileImage] = useState(null);
   const [profileName, setProfileName] = useState('');
   const [editingProfileField, setEditingProfileField] = useState('');
@@ -650,6 +663,33 @@ export default function App() {
 
     loadUserData();
   }, [user]);
+
+  useEffect(() => {
+    if (currentTime === 0) {
+      const timeout = setTimeout(() => setCurrentTime(Date.now()), 0);
+      return () => clearTimeout(timeout);
+    }
+
+    const nextThreshold = foundItems.reduce((next, item) => {
+      if (item.status === 'recovered' || item.type === 'recovered') {
+        return next;
+      }
+      const startTime = getTimestampMillis(
+        item.type === 'lost' ? item.createdAt : item.foundAtDaeeAt || item.createdAt,
+      );
+      const threshold = startTime === null ? null : startTime + 7 * 24 * 60 * 60 * 1000;
+      return threshold !== null && threshold > currentTime
+        ? Math.min(next, threshold)
+        : next;
+    }, Number.POSITIVE_INFINITY);
+
+    if (!Number.isFinite(nextThreshold)) {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => setCurrentTime(Date.now()), nextThreshold - currentTime);
+    return () => clearTimeout(timeout);
+  }, [foundItems, currentTime]);
 
   const clearForm = () => {
     setFullName('');
@@ -1326,6 +1366,17 @@ export default function App() {
     recovered: filteredItems.filter((item) => item.type === 'recovered' || item.status === 'recovered'),
   }), [filteredItems]);
 
+  const displayedItems = useMemo(() => {
+    const items = filteredItemsByType[itemListFilter];
+    if (oldItemFilter === 'all') {
+      return items;
+    }
+    const expectedLabel = oldItemFilter === 'lost'
+      ? 'Perdido há muito tempo'
+      : 'Achado há muito tempo';
+    return items.filter((item) => getOldItemLabel(item, currentTime) === expectedLabel);
+  }, [filteredItemsByType, itemListFilter, oldItemFilter, currentTime]);
+
   const myItemsOnly = useMemo(
     () => filteredItems.filter((item) => item.userId === user?.uid),
     [filteredItems, user?.uid],
@@ -1347,6 +1398,7 @@ export default function App() {
       <View style={styles.itemGrid}>
         {items.map((item) => {
           const itemStatus = item.status === 'recovered' ? 'recovered' : item.type || 'found';
+          const oldItemLabel = getOldItemLabel(item, currentTime);
           const statusLabel = { lost: 'Perdido', found: 'Achado', recovered: 'Recuperado' }[itemStatus] || 'Achado';
           const statusStyle = itemStatus === 'lost'
             ? styles.itemTypeBadgeLost
@@ -1389,9 +1441,9 @@ export default function App() {
                 <View style={[styles.itemTypeBadge, statusStyle]}>
                   <Text style={[styles.itemTypeBadgeText, statusTextStyle]}>{statusLabel}</Text>
                 </View>
-                {item.type === 'lost' && isOldLost(item.createdAt) ? (
-                  <View style={styles.oldLostBadge}>
-                    <Text style={styles.oldLostBadgeText}>Perdido há muito tempo</Text>
+                {oldItemLabel ? (
+                  <View style={styles.oldItemBadge}>
+                    <Text style={styles.oldItemBadgeText}>{oldItemLabel}</Text>
                   </View>
                 ) : null}
                 <Text style={styles.itemCategoryBadgeText} numberOfLines={1}>
@@ -1428,7 +1480,7 @@ export default function App() {
         })}
       </View>
     );
-  }, [navigateTo]);
+  }, [navigateTo, currentTime]);
 
   if (user) {
     return (
@@ -1455,11 +1507,33 @@ export default function App() {
                         { key: 'found', label: 'Achados' },
                         { key: 'recovered', label: 'Recuperados' },
                       ].map((filter) => (
-                        <TouchableOpacity key={filter.key} style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]} onPress={() => setItemListFilter(filter.key)}>
+                        <TouchableOpacity key={filter.key} style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]} onPress={() => { setItemListFilter(filter.key); setOldItemFilter('all'); }}>
                           <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>{filter.label}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>
+                    <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                      {[
+                        { key: 'all', label: 'Todos' },
+                        { key: 'lost', label: 'Perdido há muito tempo' },
+                        { key: 'found', label: 'Achado há muito tempo' },
+                      ].map((filter) => (
+                        <TouchableOpacity
+                          key={filter.key}
+                          style={[styles.categoryChip, oldItemFilter === filter.key && styles.categoryChipActive]}
+                          onPress={() => {
+                            setOldItemFilter(filter.key);
+                            if (filter.key !== 'all') {
+                              setItemListFilter(filter.key);
+                            }
+                          }}
+                        >
+                          <Text style={[styles.categoryChipText, oldItemFilter === filter.key && styles.categoryChipTextActive]}>
+                            {filter.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
                     <View style={styles.searchBox}>
                       <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
                       <TouchableOpacity style={styles.categoryFilterButton} onPress={() => setShowCategoryFilters((value) => !value)}>
@@ -1550,9 +1624,9 @@ export default function App() {
                     )}
                     <View style={styles.sectionHeading}>
                       <Text style={styles.sectionHeadingTitle}>{itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}</Text>
-                      <Text style={styles.resultCount}>{filteredItemsByType[itemListFilter].length} itens</Text>
+                      <Text style={styles.resultCount}>{displayedItems.length} itens</Text>
                     </View>
-                    {renderItemList(filteredItemsByType[itemListFilter], itemListFilter)}
+                    {renderItemList(displayedItems, itemListFilter)}
                   </>
                 )}
 
@@ -1564,6 +1638,11 @@ export default function App() {
                     {selectedItem.imageUrl ? <Image source={{ uri: selectedItem.imageUrl }} style={styles.detailImage} resizeMode="cover" /> : null}
                     <View style={styles.detailInformation}>
                       <Text style={styles.detailType}>{selectedItem.status === 'recovered' ? 'ITEM RECUPERADO' : selectedItem.type === 'lost' ? 'ITEM PERDIDO' : 'ITEM ACHADO'}</Text>
+                      {getOldItemLabel(selectedItem, currentTime) ? (
+                        <View style={styles.oldItemBadge}>
+                          <Text style={styles.oldItemBadgeText}>{getOldItemLabel(selectedItem, currentTime)}</Text>
+                        </View>
+                      ) : null}
                       <Text style={styles.detailTitle}>{selectedItem.name}</Text>
                       <Text style={styles.detailDescription}>{selectedItem.description}</Text>
                       <Text style={styles.detailLabel}>Local</Text>
@@ -2963,7 +3042,7 @@ const styles = StyleSheet.create({
   itemTypeBadgeRecovered: {
     backgroundColor: '#E7F0F8',
   },
-  oldLostBadge: {
+  oldItemBadge: {
     backgroundColor: '#FFD6D6',
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -2971,7 +3050,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     marginTop: 4,
   },
-  oldLostBadgeText: {
+  oldItemBadgeText: {
     color: '#A11A1A',
     fontSize: 10,
     fontWeight: '700',
@@ -3198,4 +3277,3 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
-
