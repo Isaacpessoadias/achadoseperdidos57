@@ -185,8 +185,8 @@ service cloud.firestore {
       }
 
       // ----------------------------------------------------------------
-      // Sub‑collection: comments – any authenticated user can read; only the
-      // author can create a comment; only the author can append a single reply.
+      // Sub‑collection: comments – any authenticated user can read and reply;
+      // only the comment author can create the comment.
       // ----------------------------------------------------------------
       match /comments/{commentId} {
         allow read: if request.auth != null;
@@ -198,7 +198,7 @@ service cloud.firestore {
           && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 1000
           && request.resource.data.createdAt == request.time;
         allow update: if request.auth != null
-          && request.resource.data.keys().hasOnly(['replies'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['replies'])
           && request.resource.data.replies is list
           && request.resource.data.replies.size() == resource.data.get('replies', []).size() + 1
           && request.resource.data.replies.hasAll(resource.data.get('replies', []))
