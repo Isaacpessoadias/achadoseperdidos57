@@ -240,7 +240,7 @@ const getFriendlyAuthError = (error, action) => {
 
 const getFirestoreError = (error, action) => {
   if (error?.code === 'permission-denied') {
-    return `Permissão negada ao ${action}. Publique as regras do Firestore para profiles, items e comments.`;
+    return `Permissão negada ao ${action}. Publique as regras atualizadas do Firestore para profiles, items, comments e notifications.`;
   }
 
   if (error?.code === 'unavailable' || error?.code === 'failed-precondition') {
@@ -292,6 +292,7 @@ const uploadImage = async (uri, fileName, webFile) => {
 const CommentItem = React.memo(function CommentItem({
   comment,
   itemId,
+  itemName,
   user,
   profileName,
   profileImage,
@@ -314,15 +315,34 @@ const CommentItem = React.memo(function CommentItem({
     setIsSendingReply(true);
     setReplyError('');
     try {
-      await updateDoc(doc(db, 'items', itemId, 'comments', comment.id), {
-        replies: arrayUnion({
-          userId: user.uid,
-          authorName: profileName || user.displayName || user.email || 'Usuário',
-          authorPhotoUrl: profileImage || '',
-          text,
-          createdAt: new Date().toISOString(),
-        }),
+      const authorName = profileName || user.displayName || user.email || 'Usuário';
+      const reply = {
+        userId: user.uid,
+        authorName,
+        authorPhotoUrl: profileImage || '',
+        text,
+        createdAt: new Date().toISOString(),
+      };
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'items', itemId, 'comments', comment.id), {
+        replies: arrayUnion(reply),
       });
+      if (comment.userId && comment.userId !== user.uid) {
+        const notificationReference = doc(collection(db, 'profiles', comment.userId, 'notifications'));
+        batch.set(notificationReference, {
+          type: 'comment_reply',
+          itemId,
+          itemName,
+          commentId: comment.id,
+          title: 'Responderam ao seu comentário',
+          body: `${authorName} respondeu: ${text.slice(0, 120)}`,
+          actorId: user.uid,
+          actorName: authorName,
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+      }
+      await batch.commit();
       setReplyText('');
       setIsReplying(false);
       setShowReplies(true);
@@ -418,6 +438,8 @@ export default function App() {
   const [status, setStatus] = useState({ type: '', text: '' });
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState('items');
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsError, setNotificationsError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [showDateFilters, setShowDateFilters] = useState(false);
@@ -483,7 +505,8 @@ export default function App() {
     : Boolean(filterDateStart || filterDateEnd);
   const activeNavigationView = ['profile', 'settings', 'myItems'].includes(activeView)
     ? 'profile'
-    : 'items';
+    : activeView === 'notifications' ? 'notifications' : 'items';
+  const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
   const canManageSelectedItem = getAccountType(user?.email) === 'server';
   const canViewRecoveryPerson = getAccountType(user?.email) === 'server'
     || selectedItem?.userId === user?.uid;
@@ -650,6 +673,31 @@ export default function App() {
 
     return unsubscribe;
   }, [navigateTo]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      return undefined;
+    }
+
+    return onSnapshot(
+      collection(db, 'profiles', user.uid, 'notifications'),
+      (snapshot) => {
+        const nextNotifications = snapshot.docs
+          .map((notificationSnapshot) => ({
+            id: notificationSnapshot.id,
+            ...notificationSnapshot.data(),
+          }))
+          .sort((first, second) => (
+            getTimestampMillis(second.createdAt) - getTimestampMillis(first.createdAt)
+          ));
+        setNotifications(nextNotifications);
+        setNotificationsError('');
+      },
+      (error) => {
+        setNotificationsError(getFirestoreError(error, 'carregar as notificações'));
+      },
+    );
+  }, [user?.uid]);
 
   useEffect(() => {
     const loginSuccessMessage = 'Login realizado com sucesso!';
@@ -1232,19 +1280,66 @@ export default function App() {
     setIsSubmittingComment(true);
     setCommentsError('');
     try {
-      await addDoc(collection(db, 'items', selectedItem.id, 'comments'), {
-                userId: user.uid,
-                authorName: profileName || user.displayName || user.email || 'Usuário',
-                authorPhotoUrl: profileImage || '',
-                text,
-                createdAt: serverTimestamp(),
-              });
+      const authorName = profileName || user.displayName || user.email || 'Usuário';
+      const commentReference = doc(collection(db, 'items', selectedItem.id, 'comments'));
+      const batch = writeBatch(db);
+      batch.set(commentReference, {
+        userId: user.uid,
+        authorName,
+        authorPhotoUrl: profileImage || '',
+        text,
+        createdAt: serverTimestamp(),
+      });
+      if (selectedItem.userId && selectedItem.userId !== user.uid) {
+        const notificationReference = doc(collection(db, 'profiles', selectedItem.userId, 'notifications'));
+        batch.set(notificationReference, {
+          type: 'new_comment',
+          itemId: selectedItem.id,
+          itemName: selectedItem.name || 'seu item',
+          commentId: commentReference.id,
+          title: 'Novo comentário no seu item',
+          body: `${authorName}: ${text.slice(0, 120)}`,
+          actorId: user.uid,
+          actorName: authorName,
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+      }
+      await batch.commit();
       setCommentText('');
     } catch (error) {
       setCommentsError(getFirestoreError(error, 'enviar o comentário'));
     } finally {
       setIsSubmittingComment(false);
     }
+  };
+
+  const handleOpenNotification = async (notification) => {
+    if (!notification.read) {
+      try {
+        await updateDoc(
+          doc(db, 'profiles', user.uid, 'notifications', notification.id),
+          { read: true },
+        );
+        setNotifications((currentNotifications) => currentNotifications.map((currentNotification) => (
+          currentNotification.id === notification.id
+            ? { ...currentNotification, read: true }
+            : currentNotification
+        )));
+      } catch (error) {
+        setNotificationsError(getFirestoreError(error, 'marcar a notificação como lida'));
+      }
+    }
+
+    const item = foundItems.find((foundItem) => foundItem.id === notification.itemId);
+    if (!item) {
+      setNotificationsError('O item desta notificação não está mais disponível.');
+      return;
+    }
+
+    setNotificationsError('');
+    setSelectedItem(item);
+    navigateTo('itemDetail');
   };
 
   const handleReportItemFound = async () => {
@@ -1328,6 +1423,21 @@ export default function App() {
         enrollment: claimantEnrollment,
         recordedAt: serverTimestamp(),
       });
+      if (selectedItem.userId && selectedItem.userId !== user.uid) {
+        const actorName = profileName || user.displayName || user.email || 'Equipe de Achados e Perdidos';
+        const notificationReference = doc(collection(db, 'profiles', selectedItem.userId, 'notifications'));
+        batch.set(notificationReference, {
+          type: 'item_recovered',
+          itemId: selectedItem.id,
+          itemName: selectedItem.name || 'seu item',
+          title: 'Seu item foi recuperado',
+          body: `O status de “${selectedItem.name || 'seu item'}” mudou para recuperado.`,
+          actorId: user.uid,
+          actorName,
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+      }
       await batch.commit();
       const updatedItem = {
         ...selectedItem,
@@ -1366,7 +1476,24 @@ export default function App() {
     };
 
     try {
-      await updateDoc(doc(db, 'items', selectedItem.id), statusData);
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'items', selectedItem.id), statusData);
+      if (selectedItem.userId && selectedItem.userId !== user.uid) {
+        const actorName = profileName || user.displayName || user.email || 'Equipe de Achados e Perdidos';
+        const notificationReference = doc(collection(db, 'profiles', selectedItem.userId, 'notifications'));
+        batch.set(notificationReference, {
+          type: 'item_found',
+          itemId: selectedItem.id,
+          itemName: selectedItem.name || 'seu item',
+          title: 'Seu item foi encontrado',
+          body: `O status de “${selectedItem.name || 'seu item'}” mudou para achado.`,
+          actorId: user.uid,
+          actorName,
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+      }
+      await batch.commit();
       const updatedItem = { ...selectedItem, ...statusData, foundAtDaeeAt };
       setSelectedItem(updatedItem);
       setFoundItems((items) => items.map((item) => (
@@ -1793,9 +1920,41 @@ export default function App() {
                           {isSubmittingComment ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Comentar</Text>}
                         </TouchableOpacity>
                         {!isLoadingComments && !itemComments.length && !commentsError ? <Text style={styles.emptyComments}>Ainda não há comentários. Comece a conversa.</Text> : null}
-                        {itemComments.map((comment) => <CommentItem key={comment.id} comment={comment} itemId={selectedItem.id} user={user} profileName={profileName} profileImage={profileImage} commentProfileImages={commentProfileImages} />)}
+                        {itemComments.map((comment) => <CommentItem key={comment.id} comment={comment} itemId={selectedItem.id} itemName={selectedItem.name} user={user} profileName={profileName} profileImage={profileImage} commentProfileImages={commentProfileImages} />)}
                       </View>
                     </View>
+                  </View>
+                )}
+
+                {activeView === 'notifications' && (
+                  <View style={styles.notificationsScreen}>
+                    <Text style={styles.title}>Notificações</Text>
+                    <Text style={styles.listDescription}>Atualizações dos seus itens e conversas.</Text>
+                    {notificationsError ? <Text style={styles.errorText}>{notificationsError}</Text> : null}
+                    {notifications.length === 0 && !notificationsError ? (
+                      <View style={styles.emptyNotifications}>
+                        <Text style={styles.emptyNotificationsIcon}>🔔</Text>
+                        <Text style={styles.emptyNotificationsTitle}>Tudo em dia</Text>
+                        <Text style={styles.emptyNotificationsText}>Avisaremos quando um item seu mudar de status, receber um comentário ou alguém responder ao seu.</Text>
+                      </View>
+                    ) : null}
+                    {notifications.map((notification) => (
+                      <TouchableOpacity
+                        key={notification.id}
+                        style={[styles.notificationCard, !notification.read && styles.notificationCardUnread]}
+                        onPress={() => handleOpenNotification(notification)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${notification.title}. ${notification.body}. ${notification.read ? 'Lida' : 'Não lida'}`}
+                      >
+                        <View style={styles.notificationCardHeader}>
+                          <Text style={styles.notificationTitle}>{notification.title}</Text>
+                          {!notification.read ? <View style={styles.notificationUnreadDot} /> : null}
+                        </View>
+                        <Text style={styles.notificationItemName}>{notification.itemName}</Text>
+                        <Text style={styles.notificationBody}>{notification.body}</Text>
+                        <Text style={styles.notificationDate}>{formatDateTime(notification.createdAt)}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
                 )}
 
@@ -1808,6 +1967,12 @@ export default function App() {
                     </TouchableOpacity>
                     <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
                     <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
+                    <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('notifications')}>
+                      <Text style={styles.profileActionTitle}>Notificações</Text>
+                      {unreadNotificationCount > 0 ? (
+                        <Text style={styles.notificationProfileCount}>{unreadNotificationCount} não lidas</Text>
+                      ) : null}
+                    </TouchableOpacity>
                     <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('myItems')}><Text style={styles.profileActionTitle}>Meus itens</Text></TouchableOpacity>
                     <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}><Text style={styles.profileActionTitle}>Configurações</Text></TouchableOpacity>
                   </View>
@@ -1984,6 +2149,27 @@ export default function App() {
                   accessibilityState={{ selected: activeNavigationView === 'items' }}
                 >
                   <Text style={[styles.bottomNavText, activeNavigationView === 'items' && styles.bottomNavTextActive]}>Itens</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.bottomNavButton, activeNavigationView === 'notifications' && styles.bottomNavButtonActive]}
+                  onPress={() => navigateTo('notifications')}
+                  accessibilityRole="button"
+                  accessibilityLabel={unreadNotificationCount
+                    ? `Notificações, ${unreadNotificationCount} não lidas`
+                    : 'Notificações'}
+                  accessibilityState={{ selected: activeNavigationView === 'notifications' }}
+                >
+                  <View style={styles.notificationNavContent}>
+                    <View style={styles.notificationNavIconWrap}>
+                      <Text style={[styles.notificationNavIcon, activeNavigationView === 'notifications' && styles.bottomNavTextActive]}>🔔</Text>
+                      {unreadNotificationCount > 0 ? (
+                        <View style={styles.notificationBadge}>
+                          <Text style={styles.notificationBadgeText}>{unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.bottomNavText, activeNavigationView === 'notifications' && styles.bottomNavTextActive]}>Avisos</Text>
+                  </View>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
@@ -2393,6 +2579,111 @@ const styles = StyleSheet.create({
   },
   bottomNavTextActive: {
     color: theme.colors.onSurface,
+  },
+  notificationNavContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationNavIconWrap: {
+    position: 'relative',
+    marginBottom: 2,
+  },
+  notificationNavIcon: {
+    color: theme.colors.secondaryText,
+    fontSize: 18,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -7,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    backgroundColor: theme.colors.error,
+  },
+  notificationBadgeText: {
+    color: theme.colors.surface,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  notificationsScreen: {
+    width: '100%',
+    maxWidth: 620,
+    alignSelf: 'center',
+  },
+  emptyNotifications: {
+    alignItems: 'center',
+    padding: 28,
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+    borderRadius: theme.shape.large,
+    backgroundColor: theme.colors.surface,
+  },
+  emptyNotificationsIcon: {
+    marginBottom: theme.spacing.sm,
+    fontSize: 34,
+  },
+  emptyNotificationsTitle: {
+    marginBottom: 6,
+    color: theme.colors.onSurface,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  emptyNotificationsText: {
+    color: theme.colors.secondaryText,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  notificationCard: {
+    marginBottom: 10,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+    borderRadius: theme.shape.large,
+    backgroundColor: theme.colors.surface,
+  },
+  notificationCardUnread: {
+    borderColor: theme.colors.primary,
+    backgroundColor: '#F7F3FF',
+  },
+  notificationCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: theme.spacing.sm,
+  },
+  notificationTitle: {
+    flex: 1,
+    color: theme.colors.onSurface,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  notificationUnreadDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: theme.colors.primary,
+  },
+  notificationItemName: {
+    marginTop: 5,
+    color: theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  notificationBody: {
+    marginTop: 7,
+    color: theme.colors.secondaryText,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  notificationDate: {
+    marginTop: 10,
+    color: theme.colors.secondaryText,
+    fontSize: 11,
   },
   profileNavButton: {
     flex: 1.3,
@@ -3262,6 +3553,11 @@ const styles = StyleSheet.create({
   profileActionTitle: {
     color: '#27232E',
     fontSize: 17,
+    fontWeight: '700',
+  },
+  notificationProfileCount: {
+    color: theme.colors.primary,
+    fontSize: 13,
     fontWeight: '700',
   },
   profileActionSubtitle: {
