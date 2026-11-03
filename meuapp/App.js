@@ -442,6 +442,7 @@ export default function App() {
   const [notificationsError, setNotificationsError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
+  const [showSearchFilters, setShowSearchFilters] = useState(false);
   const [showDateFilters, setShowDateFilters] = useState(false);
   const [filterDateMode, setFilterDateMode] = useState('single');
   const [filterDateStart, setFilterDateStart] = useState('');
@@ -537,6 +538,7 @@ export default function App() {
   const navigateTo = useCallback((view) => {
     setActiveView(view);
     setShowScrollTop(false);
+    setShowSearchFilters(false);
     setShowDateFilters(false);
     setFilterDatePickerField(null);
     if (view === 'itemDetail') {
@@ -1563,7 +1565,7 @@ export default function App() {
   }), [filteredItems]);
 
   const displayedItems = useMemo(() => {
-    const items = filteredItemsByType[itemListFilter];
+    const items = itemListFilter === 'all' ? filteredItems : filteredItemsByType[itemListFilter];
     if (oldItemFilter === 'all') {
       return items;
     }
@@ -1571,7 +1573,7 @@ export default function App() {
       ? 'Perdido há muito tempo'
       : 'Achado há muito tempo';
     return items.filter((item) => getOldItemLabel(item, currentTime) === expectedLabel);
-  }, [filteredItemsByType, itemListFilter, oldItemFilter, currentTime]);
+  }, [filteredItems, filteredItemsByType, itemListFilter, oldItemFilter, currentTime]);
 
   const myItemsOnly = useMemo(
     () => filteredItems.filter((item) => item.userId === user?.uid),
@@ -1584,7 +1586,13 @@ export default function App() {
         <View style={styles.emptyState}>
           <Text style={styles.emptyStateMark}>◎</Text>
           <Text style={styles.cardTitle}>
-            {ownItemsOnly ? 'Você ainda não publicou nenhum item' : type === 'lost' ? 'Nenhum item perdido por aqui' : 'Nenhum item encontrado'}
+            {ownItemsOnly
+              ? 'Você ainda não publicou nenhum item'
+              : type === 'lost'
+                ? 'Nenhum item perdido por aqui'
+                : type === 'found'
+                  ? 'Nenhum item encontrado'
+                  : 'Nenhum item por aqui'}
           </Text>
           <Text style={styles.cardText}>Tente ajustar a busca ou confira novamente mais tarde.</Text>
         </View>
@@ -1695,46 +1703,40 @@ export default function App() {
                     <Text style={styles.title}>Itens</Text>
                     <View style={styles.myItemsFilterRow}>
                       {[
+                        { key: 'all', label: 'Todos' },
                         { key: 'lost', label: 'Perdidos' },
                         { key: 'found', label: 'Achados' },
                         { key: 'recovered', label: 'Recuperados' },
                       ].map((filter) => (
-                        <TouchableOpacity key={filter.key} style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]} onPress={() => { setItemListFilter(filter.key); setOldItemFilter('all'); }}>
-                          <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>{filter.label}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                    <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
-                      {[
-                        { key: 'all', label: 'Todos' },
-                        { key: 'lost', label: 'Perdido há muito tempo' },
-                        { key: 'found', label: 'Achado há muito tempo' },
-                      ].map((filter) => (
                         <TouchableOpacity
                           key={filter.key}
-                          style={[styles.categoryChip, oldItemFilter === filter.key && styles.categoryChipActive]}
+                          style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]}
                           onPress={() => {
-                            setOldItemFilter(filter.key);
-                            if (filter.key !== 'all') {
-                              setItemListFilter(filter.key);
-                            }
+                            setItemListFilter(filter.key);
+                            setOldItemFilter('all');
                           }}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: itemListFilter === filter.key }}
                         >
-                          <Text style={[styles.categoryChipText, oldItemFilter === filter.key && styles.categoryChipTextActive]}>
+                          <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>
                             {filter.label}
                           </Text>
                         </TouchableOpacity>
                       ))}
-                    </ScrollView>
-                    <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
-                      {categoryOptions.map((category) => (
-                        <TouchableOpacity key={category} style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]} onPress={() => setSelectedCategory(category)}>
-                          <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
+                    </View>
                     <View style={styles.searchBox}>
                       <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
+                      <TouchableOpacity
+                        style={[styles.categoryFilterButton, showSearchFilters && styles.categoryFilterButtonActive]}
+                        onPress={() => {
+                          setShowSearchFilters(!showSearchFilters);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={showSearchFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
+                        accessibilityState={{ expanded: showSearchFilters }}
+                      >
+                        <Text>☷</Text>
+                      </TouchableOpacity>
                       <TouchableOpacity
                         style={[styles.categoryFilterButton, showDateFilters && styles.categoryFilterButtonActive]}
                         onPress={() => {
@@ -1744,11 +1746,44 @@ export default function App() {
                           setShowDateFilters(!showDateFilters);
                         }}
                         accessibilityRole="button"
-                        accessibilityLabel={showDateFilters ? 'Ocultar filtros de data' : 'Mostrar filtros de data'}
+                        accessibilityLabel={showDateFilters ? 'Ocultar filtros de data' : 'Selecionar uma data'}
+                        accessibilityState={{ expanded: showDateFilters }}
                       >
-                        <Text>☷</Text>
+                        <Text>▦</Text>
                       </TouchableOpacity>
                     </View>
+                    {showSearchFilters && (
+                      <View style={styles.searchFilterPanel}>
+                        <Text style={styles.searchFilterTitle}>Tempo</Text>
+                        <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                          {[
+                            { key: 'all', label: 'Todos' },
+                            { key: 'lost', label: 'Perdido há muito tempo' },
+                            { key: 'found', label: 'Achado há muito tempo' },
+                          ].map((filter) => (
+                            <TouchableOpacity
+                              key={filter.key}
+                              style={[styles.categoryChip, oldItemFilter === filter.key && styles.categoryChipActive]}
+                              onPress={() => {
+                                setOldItemFilter(filter.key);
+                              }}
+                            >
+                              <Text style={[styles.categoryChipText, oldItemFilter === filter.key && styles.categoryChipTextActive]}>
+                                {filter.label}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                        <Text style={styles.searchFilterTitle}>Categoria</Text>
+                        <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                          {categoryOptions.map((category) => (
+                            <TouchableOpacity key={category} style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]} onPress={() => setSelectedCategory(category)}>
+                              <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    )}
                     {showDateFilters && (
                         <View style={styles.dateFilterPanel}>
                           <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
@@ -1823,7 +1858,7 @@ export default function App() {
                         </View>
                     )}
                     <View style={styles.sectionHeading}>
-                      <Text style={styles.sectionHeadingTitle}>{itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}</Text>
+                      <Text style={styles.sectionHeadingTitle}>{itemListFilter === 'all' ? 'Todos os itens' : itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}</Text>
                       <Text style={styles.resultCount}>{displayedItems.length} itens</Text>
                     </View>
                     {renderItemList(displayedItems, itemListFilter)}
@@ -3161,6 +3196,21 @@ const styles = StyleSheet.create({
   },
   categoryFilterButtonActive: {
     backgroundColor: '#ECE9F0',
+  },
+  searchFilterPanel: {
+    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: '#E7E2EC',
+    borderRadius: theme.shape.large,
+  },
+  searchFilterTitle: {
+    marginTop: 6,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.labelMedium.fontSize,
+    fontWeight: '700',
   },
   dateFilterPanel: {
     marginBottom: 14,
