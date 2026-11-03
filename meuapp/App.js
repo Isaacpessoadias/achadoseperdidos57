@@ -507,6 +507,7 @@ export default function App() {
     ? 'profile'
     : activeView === 'notifications' ? 'notifications' : 'items';
   const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
+  const userFirstName = (profileName || user?.displayName || '').trim().split(/\s+/)[0] || 'Minha conta';
   const canManageSelectedItem = getAccountType(user?.email) === 'server';
   const canViewRecoveryPerson = getAccountType(user?.email) === 'server'
     || selectedItem?.userId === user?.uid;
@@ -1675,6 +1676,21 @@ export default function App() {
               >
                 {activeView === 'items' && (
                   <>
+                    <TouchableOpacity
+                      style={styles.homeProfileButton}
+                      onPress={() => navigateTo('profile')}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
+                    >
+                      <Text style={styles.homeProfileName} numberOfLines={1}>
+                        {userFirstName}
+                      </Text>
+                      <Image
+                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
+                        style={styles.homeProfileAvatar}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
                     <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
                     <Text style={styles.title}>Itens</Text>
                     <View style={styles.myItemsFilterRow}>
@@ -2046,7 +2062,19 @@ export default function App() {
                     <Text style={styles.title}>Cadastrar item</Text>
                     {getAccountType(user.email) === 'server' ? (
                       <View style={styles.authModeRow}>
-                        {['lost', 'found'].map((type) => <TouchableOpacity key={type} style={styles.authModeButton} onPress={() => setItemType(type)}><Text>{type === 'lost' ? 'Perdido' : 'Achado'}</Text></TouchableOpacity>)}
+                        {['lost', 'found'].map((type) => (
+                          <TouchableOpacity
+                            key={type}
+                            style={[styles.authModeButton, itemType === type && styles.authModeButtonActive]}
+                            onPress={() => setItemType(type)}
+                            accessibilityRole="radio"
+                            accessibilityState={{ selected: itemType === type }}
+                          >
+                            <Text style={[styles.authModeText, itemType === type && styles.authModeTextActive]}>
+                              {type === 'lost' ? 'Perdido' : 'Achado'}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
                       </View>
                     ) : null}
                     <TextInput style={styles.input} placeholder="Nome" value={itemName} onChangeText={setItemName} />
@@ -2337,6 +2365,26 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
+  },
+  homeProfileButton: {
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+    minHeight: 40,
+    marginBottom: 8,
+  },
+  homeProfileName: {
+    maxWidth: 140,
+    color: theme.colors.onSurface,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  homeProfileAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.colors.surfaceVariant,
   },
   profileAvatar: {
     width: 32,

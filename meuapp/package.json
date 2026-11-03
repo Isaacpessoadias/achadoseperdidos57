@@ -4,7 +4,7 @@
   "main": "index.js",
   "dependencies": {
     "@dataconnect/generated": "file:src/dataconnect-generated",
-    "@expo/ui": "~57.0.23",
+    "@expo/ui": "~57.0.26",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.19.2",
     "@react-navigation/native": "^7.4.1",
@@ -13,7 +13,7 @@
     "cors": "^2.8.6",
     "crypto-js": "^4.2.0",
     "eas-cli": "^25.3.0",
-    "expo": "~57.0.28",
+    "expo": "~57.0.31",
     "expo-blob": "^57.0.2",
     "expo-file-system": "~57.0.7",
     "expo-image-picker": "~57.0.20",
