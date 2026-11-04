@@ -1,6 +1,23 @@
 import DateTimePicker from '@expo/ui/community/datetime-picker';
+<<<<<<< Updated upstream
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
+=======
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+>>>>>>> Stashed changes
 import { StatusBar } from 'expo-status-bar';
 import { getApps, initializeApp } from 'firebase/app';
 import {
@@ -441,8 +458,8 @@ export default function App() {
   const [notificationsError, setNotificationsError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
-  const [showSearchFilters, setShowSearchFilters] = useState(false);
-  const [showDateFilters, setShowDateFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [pendingFilters, setPendingFilters] = useState(null);
   const [filterDateMode, setFilterDateMode] = useState('single');
   const [filterDateStart, setFilterDateStart] = useState('');
   const [filterDateEnd, setFilterDateEnd] = useState('');
@@ -537,14 +554,47 @@ export default function App() {
   const navigateTo = useCallback((view) => {
     setActiveView(view);
     setShowScrollTop(false);
-    setShowSearchFilters(false);
-    setShowDateFilters(false);
+    setShowFilters(false);
+    setPendingFilters(null);
     setFilterDatePickerField(null);
     if (view === 'itemDetail') {
       setCommentsError('');
     }
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
   }, []);
+
+  const openFilters = () => {
+    setPendingFilters({
+      itemListFilter,
+      oldItemFilter,
+      selectedCategory,
+      filterDateMode,
+      filterDateStart,
+      filterDateEnd,
+    });
+    setShowFilters(true);
+  };
+
+  const closeFilters = () => {
+    setFilterDatePickerField(null);
+    setPendingFilters(null);
+    setShowFilters(false);
+  };
+
+  const applyFilters = () => {
+    if (!pendingFilters) {
+      closeFilters();
+      return;
+    }
+
+    setItemListFilter(pendingFilters.itemListFilter);
+    setOldItemFilter(pendingFilters.oldItemFilter);
+    setSelectedCategory(pendingFilters.selectedCategory);
+    setFilterDateMode(pendingFilters.filterDateMode);
+    setFilterDateStart(pendingFilters.filterDateStart);
+    setFilterDateEnd(pendingFilters.filterDateEnd);
+    closeFilters();
+  };
 
 
   useEffect(() => {
@@ -1117,6 +1167,19 @@ export default function App() {
 
   const updateFilterDate = (field, date) => {
     const value = toStoredDate(date);
+    if (pendingFilters) {
+      setPendingFilters((current) => ({
+        ...current,
+        ...(field === 'start'
+          ? {
+            filterDateStart: value,
+            filterDateEnd: current.filterDateEnd && value > current.filterDateEnd ? '' : current.filterDateEnd,
+          }
+          : { filterDateEnd: value }),
+      }));
+      return;
+    }
+
     if (field === 'start') {
       setFilterDateStart(value);
       if (filterDateEnd && value > filterDateEnd) {
@@ -1129,15 +1192,17 @@ export default function App() {
   };
 
   const openFilterDatePicker = (field) => {
-    setFilterDateDraft(fromStoredDate(field === 'start' ? filterDateStart : filterDateEnd));
+    setFilterDateDraft(fromStoredDate(field === 'start' ? pendingFilters?.filterDateStart : pendingFilters?.filterDateEnd));
     setFilterDatePickerField(field);
   };
 
   const renderFilterDateField = (field, placeholder) => {
-    const value = field === 'start' ? filterDateStart : filterDateEnd;
+    const dateStart = pendingFilters?.filterDateStart ?? filterDateStart;
+    const dateEnd = pendingFilters?.filterDateEnd ?? filterDateEnd;
+    const value = field === 'start' ? dateStart : dateEnd;
     const dateConstraints = {
-      min: field === 'end' && filterDateStart ? filterDateStart : undefined,
-      max: field === 'start' && filterDateEnd ? filterDateEnd : undefined,
+      min: field === 'end' && dateStart ? dateStart : undefined,
+      max: field === 'start' && dateEnd ? dateEnd : undefined,
     };
 
     if (Platform.OS === 'web') {
@@ -1683,6 +1748,7 @@ export default function App() {
               >
                 {activeView === 'items' && (
                   <>
+<<<<<<< Updated upstream
                     <View style={styles.homeHeader}>
                       <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
                       <View style={styles.homeHeaderMain}>
@@ -1703,35 +1769,43 @@ export default function App() {
                           />
                         </TouchableOpacity>
                       </View>
+=======
+                    <TouchableOpacity
+                      style={styles.homeProfileButton}
+                      onPress={() => navigateTo('profile')}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
+                    >
+                      <Text style={styles.homeProfileName} numberOfLines={1}>
+                        {userFirstName}
+                      </Text>
+                      <Image
+                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
+                        style={styles.homeProfileAvatar}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                    <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
+                    <Text style={styles.title}>Itens</Text>
+                    <View style={styles.myItemsFilterRow}>
+                      <Text style={styles.filterSummary}>
+                        {itemListFilter === 'all' ? 'Todos' : itemListFilter === 'lost' ? 'Perdidos' : itemListFilter === 'found' ? 'Achados' : 'Recuperados'}
+                      </Text>
+>>>>>>> Stashed changes
                     </View>
                     <View style={styles.searchBox}>
                       <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
                       <TouchableOpacity
-                        style={[styles.categoryFilterButton, showSearchFilters && styles.categoryFilterButtonActive]}
-                        onPress={() => {
-                          setShowSearchFilters(!showSearchFilters);
-                        }}
+                        style={[styles.categoryFilterButton, showFilters && styles.categoryFilterButtonActive]}
+                        onPress={openFilters}
                         accessibilityRole="button"
-                        accessibilityLabel={showSearchFilters ? 'Ocultar filtros' : 'Mostrar filtros'}
-                        accessibilityState={{ expanded: showSearchFilters }}
+                        accessibilityLabel="Mostrar filtros"
+                        accessibilityState={{ expanded: showFilters }}
                       >
-                        <Text>☷</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.categoryFilterButton, showDateFilters && styles.categoryFilterButtonActive]}
-                        onPress={() => {
-                          if (showDateFilters) {
-                            setFilterDatePickerField(null);
-                          }
-                          setShowDateFilters(!showDateFilters);
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel={showDateFilters ? 'Ocultar filtros de data' : 'Selecionar uma data'}
-                        accessibilityState={{ expanded: showDateFilters }}
-                      >
-                        <Text>▦</Text>
+                        <Text style={styles.filterButtonIcon}>☷</Text>
                       </TouchableOpacity>
                     </View>
+<<<<<<< Updated upstream
                     <View style={styles.myItemsFilterRow}>
                       {[
                         { key: 'all', label: 'Todos' },
@@ -1756,6 +1830,65 @@ export default function App() {
                       ))}
                     </View>
                     {showSearchFilters && (
+=======
+                    <Modal
+                      visible={showFilters}
+                      transparent
+                      animationType="fade"
+                      onRequestClose={() => {
+                        closeFilters();
+                      }}
+                    >
+                      <View style={styles.filterModalBackdrop}>
+                        <TouchableOpacity
+                          style={styles.filterModalDismissArea}
+                          activeOpacity={1}
+                          onPress={() => {
+                            closeFilters();
+                          }}
+                          accessibilityLabel="Fechar filtros"
+                        />
+                        <View style={styles.filterModalPanel}>
+                          <View style={styles.filterModalHeader}>
+                            <Text style={styles.filterModalTitle}>Filtros</Text>
+                            <TouchableOpacity
+                              style={styles.filterModalClose}
+                              onPress={() => {
+                                closeFilters();
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel="Fechar filtros"
+                            >
+                              <Text style={styles.filterModalCloseText}>×</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <Text style={styles.searchFilterTitle}>Tipo de item</Text>
+                          <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                            {[
+                              { key: 'all', label: 'Todos' },
+                              { key: 'lost', label: 'Perdidos' },
+                              { key: 'found', label: 'Achados' },
+                              { key: 'recovered', label: 'Recuperados' },
+                            ].map((filter) => (
+                              <TouchableOpacity
+                                key={filter.key}
+                                style={[styles.categoryChip, pendingFilters?.itemListFilter === filter.key && styles.categoryChipActive]}
+                                onPress={() => {
+                                  setPendingFilters((current) => ({
+                                    ...current,
+                                    itemListFilter: filter.key,
+                                    oldItemFilter: 'all',
+                                  }));
+                                }}
+                              >
+                                <Text style={[styles.categoryChipText, pendingFilters?.itemListFilter === filter.key && styles.categoryChipTextActive]}>
+                                  {filter.label}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                          <ScrollView style={styles.filterModalScroll} showsVerticalScrollIndicator={false}>
+>>>>>>> Stashed changes
                       <View style={styles.searchFilterPanel}>
                         <Text style={styles.searchFilterTitle}>Tempo</Text>
                         <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
@@ -1766,12 +1899,10 @@ export default function App() {
                           ].map((filter) => (
                             <TouchableOpacity
                               key={filter.key}
-                              style={[styles.categoryChip, oldItemFilter === filter.key && styles.categoryChipActive]}
-                              onPress={() => {
-                                setOldItemFilter(filter.key);
-                              }}
+                              style={[styles.categoryChip, pendingFilters?.oldItemFilter === filter.key && styles.categoryChipActive]}
+                              onPress={() => setPendingFilters((current) => ({ ...current, oldItemFilter: filter.key }))}
                             >
-                              <Text style={[styles.categoryChipText, oldItemFilter === filter.key && styles.categoryChipTextActive]}>
+                              <Text style={[styles.categoryChipText, pendingFilters?.oldItemFilter === filter.key && styles.categoryChipTextActive]}>
                                 {filter.label}
                               </Text>
                             </TouchableOpacity>
@@ -1780,14 +1911,12 @@ export default function App() {
                         <Text style={styles.searchFilterTitle}>Categoria</Text>
                         <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
                           {categoryOptions.map((category) => (
-                            <TouchableOpacity key={category} style={[styles.categoryChip, selectedCategory === category && styles.categoryChipActive]} onPress={() => setSelectedCategory(category)}>
-                              <Text style={[styles.categoryChipText, selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
+                            <TouchableOpacity key={category} style={[styles.categoryChip, pendingFilters?.selectedCategory === category && styles.categoryChipActive]} onPress={() => setPendingFilters((current) => ({ ...current, selectedCategory: category }))}>
+                              <Text style={[styles.categoryChipText, pendingFilters?.selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
                             </TouchableOpacity>
                           ))}
                         </ScrollView>
                       </View>
-                    )}
-                    {showDateFilters && (
                         <View style={styles.dateFilterPanel}>
                           <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
                           <View style={styles.authModeRow}>
@@ -1797,19 +1926,22 @@ export default function App() {
                             ].map((mode) => (
                               <TouchableOpacity
                                 key={mode.key}
-                                style={[styles.authModeButton, filterDateMode === mode.key && styles.authModeButtonActive]}
+                                style={[styles.authModeButton, pendingFilters?.filterDateMode === mode.key && styles.authModeButtonActive]}
                                 onPress={() => {
-                                  setFilterDateMode(mode.key);
-                                  if (mode.key === 'single') setFilterDateEnd('');
+                                  setPendingFilters((current) => ({
+                                    ...current,
+                                    filterDateMode: mode.key,
+                                    filterDateEnd: mode.key === 'single' ? '' : current.filterDateEnd,
+                                  }));
                                   setFilterDatePickerField(null);
                                 }}
                               >
-                                <Text style={[styles.authModeText, filterDateMode === mode.key && styles.authModeTextActive]}>{mode.label}</Text>
+                                <Text style={[styles.authModeText, pendingFilters?.filterDateMode === mode.key && styles.authModeTextActive]}>{mode.label}</Text>
                               </TouchableOpacity>
                             ))}
                           </View>
-                          {renderFilterDateField('start', filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
-                          {filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
+                          {renderFilterDateField('start', pendingFilters?.filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
+                          {pendingFilters?.filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
                           {filterDatePickerField ? (
                             <>
                               <DateTimePicker
@@ -1818,8 +1950,8 @@ export default function App() {
                                 display={Platform.OS === 'android' ? 'default' : 'spinner'}
                                 presentation={Platform.OS === 'android' ? 'dialog' : 'inline'}
                                 locale="pt-BR"
-                                minimumDate={filterDatePickerField === 'end' && filterDateStart ? fromStoredDate(filterDateStart) : undefined}
-                                maximumDate={filterDatePickerField === 'start' && filterDateEnd ? fromStoredDate(filterDateEnd) : undefined}
+                                minimumDate={filterDatePickerField === 'end' && pendingFilters?.filterDateStart ? fromStoredDate(pendingFilters.filterDateStart) : undefined}
+                                maximumDate={filterDatePickerField === 'start' && pendingFilters?.filterDateEnd ? fromStoredDate(pendingFilters.filterDateEnd) : undefined}
                                 positiveButton={{ label: 'Confirmar' }}
                                 negativeButton={{ label: 'Cancelar' }}
                                 onValueChange={(_event, date) => {
@@ -1853,13 +1985,24 @@ export default function App() {
                               )}
                             </>
                           ) : null}
-                          {hasDateFilter ? (
-                            <TouchableOpacity onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); setFilterDatePickerField(null); }}>
+                          {pendingFilters && (pendingFilters.filterDateMode === 'single'
+                            ? Boolean(pendingFilters.filterDateStart)
+                            : Boolean(pendingFilters.filterDateStart || pendingFilters.filterDateEnd)) ? (
+                              <TouchableOpacity onPress={() => { setPendingFilters((current) => ({ ...current, filterDateStart: '', filterDateEnd: '' })); setFilterDatePickerField(null); }}>
                               <Text style={styles.dateFilterClear}>Limpar datas</Text>
                             </TouchableOpacity>
                           ) : null}
                         </View>
-                    )}
+                          </ScrollView>
+                          <TouchableOpacity
+                            style={styles.filterApplyButton}
+                            onPress={applyFilters}
+                          >
+                            <Text style={styles.filterApplyButtonText}>Aplicar filtros</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </Modal>
                     <View style={styles.sectionHeading}>
                       <Text style={styles.sectionHeadingTitle}>{itemListFilter === 'all' ? 'Todos os itens' : itemListFilter === 'lost' ? 'Itens perdidos' : itemListFilter === 'found' ? 'Itens achados' : 'Itens recuperados'}</Text>
                       <Text style={styles.resultCount}>{displayedItems.length} itens</Text>
@@ -3208,6 +3351,72 @@ const styles = StyleSheet.create({
   },
   categoryFilterButtonActive: {
     backgroundColor: '#ECE9F0',
+  },
+  filterButtonIcon: {
+    color: theme.colors.primary,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  filterSummary: {
+    color: theme.colors.secondaryText,
+    fontSize: theme.typography.labelMedium.fontSize,
+    fontWeight: '600',
+  },
+  filterModalBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(20, 16, 25, 0.38)',
+  },
+  filterModalDismissArea: {
+    flex: 1,
+  },
+  filterModalPanel: {
+    maxHeight: '86%',
+    padding: 18,
+    backgroundColor: theme.colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    elevation: theme.elevation.high,
+  },
+  filterModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  filterModalTitle: {
+    color: theme.colors.onSurface,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  filterModalClose: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    backgroundColor: '#F1EDF4',
+  },
+  filterModalCloseText: {
+    color: theme.colors.onSurface,
+    fontSize: 25,
+    lineHeight: 28,
+  },
+  filterModalScroll: {
+    flexShrink: 1,
+  },
+  filterApplyButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    borderRadius: theme.shape.medium,
+    backgroundColor: theme.colors.primary,
+  },
+  filterApplyButtonText: {
+    color: theme.colors.onPrimary,
+    fontSize: theme.typography.labelMedium.fontSize,
+    fontWeight: '800',
   },
   searchFilterPanel: {
     marginBottom: 14,
