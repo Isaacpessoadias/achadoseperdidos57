@@ -1,23 +1,7 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import ButtonPrimary from './src/components/ButtonPrimary';
-import TextField from './src/components/TextField';
-import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@expo/ui/community/datetime-picker';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import { theme } from './src/theme';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   createUserWithEmailAndPassword,
@@ -35,22 +19,37 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import {
-  getFirestore,
-  collection,
   addDoc,
+  arrayUnion,
+  collection,
   deleteDoc,
   doc,
   getDoc,
   getDocs,
-  setDoc,
-  updateDoc,
-  writeBatch,
-  arrayUnion,
+  getFirestore,
   onSnapshot,
   serverTimestamp,
-  Timestamp,
+  setDoc,
+  updateDoc,
+  writeBatch
 } from 'firebase/firestore';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import ButtonPrimary from './src/components/ButtonPrimary';
+import TextField from './src/components/TextField';
+import { theme } from './src/theme';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCUdPfqfF9NLLr4zI4TTtG54DJUh7Rio3c',
@@ -1684,45 +1683,26 @@ export default function App() {
               >
                 {activeView === 'items' && (
                   <>
-                    <TouchableOpacity
-                      style={styles.homeProfileButton}
-                      onPress={() => navigateTo('profile')}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
-                    >
-                      <Text style={styles.homeProfileName} numberOfLines={1}>
-                        {userFirstName}
-                      </Text>
-                      <Image
-                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
-                        style={styles.homeProfileAvatar}
-                        resizeMode="cover"
-                      />
-                    </TouchableOpacity>
-                    <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
-                    <Text style={styles.title}>Itens</Text>
-                    <View style={styles.myItemsFilterRow}>
-                      {[
-                        { key: 'all', label: 'Todos' },
-                        { key: 'lost', label: 'Perdidos' },
-                        { key: 'found', label: 'Achados' },
-                        { key: 'recovered', label: 'Recuperados' },
-                      ].map((filter) => (
+                    <View style={styles.homeHeader}>
+                      <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
+                      <View style={styles.homeHeaderMain}>
+                        <Text style={styles.title}>Itens</Text>
                         <TouchableOpacity
-                          key={filter.key}
-                          style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]}
-                          onPress={() => {
-                            setItemListFilter(filter.key);
-                            setOldItemFilter('all');
-                          }}
+                          style={styles.homeProfileButton}
+                          onPress={() => navigateTo('profile')}
                           accessibilityRole="button"
-                          accessibilityState={{ selected: itemListFilter === filter.key }}
+                          accessibilityLabel={`Abrir perfil de ${userFirstName}`}
                         >
-                          <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>
-                            {filter.label}
+                          <Text style={styles.homeProfileName} numberOfLines={1}>
+                            {userFirstName}
                           </Text>
+                          <Image
+                            source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
+                            style={styles.homeProfileAvatar}
+                            resizeMode="cover"
+                          />
                         </TouchableOpacity>
-                      ))}
+                      </View>
                     </View>
                     <View style={styles.searchBox}>
                       <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
@@ -1751,6 +1731,29 @@ export default function App() {
                       >
                         <Text>▦</Text>
                       </TouchableOpacity>
+                    </View>
+                    <View style={styles.myItemsFilterRow}>
+                      {[
+                        { key: 'all', label: 'Todos' },
+                        { key: 'lost', label: 'Perdidos' },
+                        { key: 'found', label: 'Achados' },
+                        { key: 'recovered', label: 'Recuperados' },
+                      ].map((filter) => (
+                        <TouchableOpacity
+                          key={filter.key}
+                          style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]}
+                          onPress={() => {
+                            setItemListFilter(filter.key);
+                            setOldItemFilter('all');
+                          }}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: itemListFilter === filter.key }}
+                        >
+                          <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>
+                            {filter.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
                     {showSearchFilters && (
                       <View style={styles.searchFilterPanel}>
@@ -2401,16 +2404,25 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
   },
+  homeHeader: {
+    alignItems: 'stretch',
+    marginBottom: 18,
+  },
+  homeHeaderMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: theme.spacing.sm,
+  },
   homeProfileButton: {
-    alignSelf: 'flex-end',
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.spacing.sm,
     minHeight: 40,
-    marginBottom: 8,
   },
   homeProfileName: {
-    maxWidth: 140,
+    maxWidth: 100,
+    flexShrink: 1,
     color: theme.colors.onSurface,
     fontSize: 14,
     fontWeight: '700',
@@ -2437,7 +2449,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     textAlign: 'left',
-    marginBottom: 18,
+    marginBottom: 0,
     color: theme.colors.onSurface,
   },
   tabButton: {
