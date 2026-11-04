@@ -3,8 +3,26 @@
     "name": "meuapp",
     "slug": "meuapp",
     "version": "1.0.0",
+    "android": {
+      "package": "com.meuapp"
+    },
+    "ios": {
+      "bundleIdentifier": "org.name.meuapp"
+    },
     "plugins": [
-      "expo-status-bar"
-    ]
+      "expo-status-bar",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "default",
+          "color": "#16A34A"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9e4d4bba-2c7d-4b20-a434-10fc945221b5"
+      }
+    }
   }
 }

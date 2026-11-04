@@ -1,20 +1,9 @@
 import DateTimePicker from '@expo/ui/community/datetime-picker';
+import Constants from 'expo-constants';
+import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { getApps, initializeApp } from 'firebase/app';
 import {
@@ -47,6 +36,20 @@ import {
   updateDoc,
   writeBatch
 } from 'firebase/firestore';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ButtonPrimary from './src/components/ButtonPrimary';
 import TextField from './src/components/TextField';
@@ -65,6 +68,47 @@ const firebaseConfig = {
 const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = initializeAuth(app, { persistence: inMemoryPersistence });
 const db = getFirestore(app);
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+const registerForPushNotificationsAsync = async () => {
+  if (!Device.isDevice || Platform.OS === 'web') {
+    return null;
+  }
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'Notificações',
+      importance: 6,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#16A34A',
+    });
+  }
+
+  let permissionStatus = (await Notifications.getPermissionsAsync()).status;
+  if (permissionStatus !== 'granted') {
+    permissionStatus = (await Notifications.requestPermissionsAsync()).status;
+  }
+  if (permissionStatus !== 'granted') {
+    return null;
+  }
+
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+  if (!projectId) {
+    console.warn('Expo push notifications require an EAS project ID.');
+    return null;
+  }
+
+  const token = await Notifications.getExpoPushTokenAsync({ projectId });
+  return token.data;
+};
 
 const DEFAULT_PROFILE_IMAGE = require('./f111634416.jpg');
 const CLOUD_NAME = 'wljwnlav';
@@ -709,6 +753,44 @@ export default function App() {
 
     return unsubscribe;
   }, [navigateTo]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      return undefined;
+    }
+
+    let isActive = true;
+    const registerDevice = async () => {
+      try {
+        const expoPushToken = await registerForPushNotificationsAsync();
+        if (!expoPushToken || !isActive) {
+          return;
+        }
+
+        if (__DEV__) {
+          console.info('Expo push token:', expoPushToken);
+        }
+
+        await setDoc(doc(db, 'profiles', user.uid, 'devices', expoPushToken), {
+          expoPushToken,
+          platform: Platform.OS,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      } catch (error) {
+        console.warn('Push notification registration failed.', error);
+      }
+    };
+
+    registerDevice();
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener(() => {
+      navigateTo('notifications');
+    });
+
+    return () => {
+      isActive = false;
+      responseSubscription.remove();
+    };
+  }, [user?.uid, navigateTo]);
 
   useEffect(() => {
     if (!user?.uid) {
@@ -1842,110 +1924,121 @@ export default function App() {
                             ))}
                           </ScrollView>
                           <ScrollView style={styles.filterModalScroll} showsVerticalScrollIndicator={false}>
-                      <View style={styles.searchFilterPanel}>
-                        <Text style={styles.searchFilterTitle}>Tempo</Text>
-                        <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
-                          {[
-                            { key: 'all', label: 'Todos' },
-                            { key: 'lost', label: 'Perdido há muito tempo' },
-                            { key: 'found', label: 'Achado há muito tempo' },
-                          ].map((filter) => (
-                            <TouchableOpacity
-                              key={filter.key}
-                              style={[styles.categoryChip, pendingFilters?.oldItemFilter === filter.key && styles.categoryChipActive]}
-                              onPress={() => setPendingFilters((current) => ({ ...current, oldItemFilter: filter.key }))}
-                            >
-                              <Text style={[styles.categoryChipText, pendingFilters?.oldItemFilter === filter.key && styles.categoryChipTextActive]}>
-                                {filter.label}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
-                        <Text style={styles.searchFilterTitle}>Categoria</Text>
-                        <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
-                          {categoryOptions.map((category) => (
-                            <TouchableOpacity key={category} style={[styles.categoryChip, pendingFilters?.selectedCategory === category && styles.categoryChipActive]} onPress={() => setPendingFilters((current) => ({ ...current, selectedCategory: category }))}>
-                              <Text style={[styles.categoryChipText, pendingFilters?.selectedCategory === category && styles.categoryChipTextActive]}>{category}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
-                      </View>
-                        <View style={styles.dateFilterPanel}>
-                          <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
-                          <View style={styles.authModeRow}>
-                            {[
-                              { key: 'single', label: 'Uma data' },
-                              { key: 'period', label: 'Período' },
-                            ].map((mode) => (
-                              <TouchableOpacity
-                                key={mode.key}
-                                style={[styles.authModeButton, pendingFilters?.filterDateMode === mode.key && styles.authModeButtonActive]}
-                                onPress={() => {
-                                  setPendingFilters((current) => ({
-                                    ...current,
-                                    filterDateMode: mode.key,
-                                    filterDateEnd: mode.key === 'single' ? '' : current.filterDateEnd,
-                                  }));
-                                  setFilterDatePickerField(null);
-                                }}
-                              >
-                                <Text style={[styles.authModeText, pendingFilters?.filterDateMode === mode.key && styles.authModeTextActive]}>{mode.label}</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                          {renderFilterDateField('start', pendingFilters?.filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
-                          {pendingFilters?.filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
-                          {filterDatePickerField ? (
-                            <>
-                              <DateTimePicker
-                                value={filterDateDraft}
-                                mode="date"
-                                display={Platform.OS === 'android' ? 'default' : 'spinner'}
-                                presentation={Platform.OS === 'android' ? 'dialog' : 'inline'}
-                                locale="pt-BR"
-                                minimumDate={filterDatePickerField === 'end' && pendingFilters?.filterDateStart ? fromStoredDate(pendingFilters.filterDateStart) : undefined}
-                                maximumDate={filterDatePickerField === 'start' && pendingFilters?.filterDateEnd ? fromStoredDate(pendingFilters.filterDateEnd) : undefined}
-                                positiveButton={{ label: 'Confirmar' }}
-                                negativeButton={{ label: 'Cancelar' }}
-                                onValueChange={(_event, date) => {
-                                  if (!date) return;
-                                  if (Platform.OS === 'android') {
-                                    updateFilterDate(filterDatePickerField, date);
-                                    setFilterDatePickerField(null);
-                                  } else {
-                                    setFilterDateDraft(date);
-                                  }
-                                }}
-                                onDismiss={() => setFilterDatePickerField(null)}
-                              />
-                              {Platform.OS !== 'android' && (
-                                <View style={styles.datePickerPanel}>
-                                  <View style={styles.datePickerActions}>
-                                    <TouchableOpacity style={styles.datePickerCancel} onPress={() => setFilterDatePickerField(null)}>
-                                      <Text style={styles.datePickerCancelText}>Cancelar</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={styles.datePickerConfirm}
-                                      onPress={() => {
-                                        updateFilterDate(filterDatePickerField, filterDateDraft);
+                            <View style={styles.searchFilterPanel}>
+                              <Text style={styles.searchFilterTitle}>Tempo</Text>
+                              <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                                {[
+                                  { key: 'all', label: 'Todos' },
+                                  { key: 'lost', label: 'Perdido há muito tempo' },
+                                  { key: 'found', label: 'Achado há muito tempo' },
+                                ].map((filter) => (
+                                  <TouchableOpacity
+                                    key={filter.key}
+                                    style={[styles.categoryChip, pendingFilters?.oldItemFilter === filter.key && styles.categoryChipActive]}
+                                    onPress={() => setPendingFilters((current) => ({ ...current, oldItemFilter: filter.key }))}
+                                  >
+                                    <Text style={[styles.categoryChipText, pendingFilters?.oldItemFilter === filter.key && styles.categoryChipTextActive]}>
+                                      {filter.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                              <Text style={styles.searchFilterTitle}>Categoria</Text>
+                              <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
+                                {categoryOptions.map((category) => (
+                                  <TouchableOpacity
+                                    key={category}
+                                    style={[styles.categoryChip, pendingFilters?.selectedCategory === category && styles.categoryChipActive]}
+                                    onPress={() => setPendingFilters((current) => ({ ...current, selectedCategory: category }))}
+                                  >
+                                    <Text style={[styles.categoryChipText, pendingFilters?.selectedCategory === category && styles.categoryChipTextActive]}>
+                                      {category}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </ScrollView>
+                            </View>
+                            <View style={styles.dateFilterPanel}>
+                              <Text style={styles.dateFilterTitle}>Data da ocorrência</Text>
+                              <View style={styles.authModeRow}>
+                                {[
+                                  { key: 'single', label: 'Uma data' },
+                                  { key: 'period', label: 'Período' },
+                                ].map((mode) => (
+                                  <TouchableOpacity
+                                    key={mode.key}
+                                    style={[styles.authModeButton, pendingFilters?.filterDateMode === mode.key && styles.authModeButtonActive]}
+                                    onPress={() => {
+                                      setPendingFilters((current) => ({
+                                        ...current,
+                                        filterDateMode: mode.key,
+                                        filterDateEnd: mode.key === 'single' ? '' : current.filterDateEnd,
+                                      }));
+                                      setFilterDatePickerField(null);
+                                    }}
+                                  >
+                                    <Text style={[styles.authModeText, pendingFilters?.filterDateMode === mode.key && styles.authModeTextActive]}>
+                                      {mode.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ))}
+                              </View>
+                              {renderFilterDateField('start', pendingFilters?.filterDateMode === 'single' ? 'Escolha uma data' : 'A partir de')}
+                              {pendingFilters?.filterDateMode === 'period' && renderFilterDateField('end', 'Até')}
+                              {filterDatePickerField ? (
+                                <>
+                                  <DateTimePicker
+                                    value={filterDateDraft}
+                                    mode="date"
+                                    display={Platform.OS === 'android' ? 'default' : 'spinner'}
+                                    presentation={Platform.OS === 'android' ? 'dialog' : 'inline'}
+                                    locale="pt-BR"
+                                    minimumDate={filterDatePickerField === 'end' && pendingFilters?.filterDateStart ? fromStoredDate(pendingFilters.filterDateStart) : undefined}
+                                    maximumDate={filterDatePickerField === 'start' && pendingFilters?.filterDateEnd ? fromStoredDate(pendingFilters.filterDateEnd) : undefined}
+                                    positiveButton={{ label: 'Confirmar' }}
+                                    negativeButton={{ label: 'Cancelar' }}
+                                    onValueChange={(_event, date) => {
+                                      if (!date) return;
+                                      if (Platform.OS === 'android') {
+                                        updateFilterDate(filterDatePickerField, date);
                                         setFilterDatePickerField(null);
-                                      }}
-                                    >
-                                      <Text style={styles.datePickerDoneText}>Confirmar</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                </View>
-                              )}
-                            </>
-                          ) : null}
-                          {pendingFilters && (pendingFilters.filterDateMode === 'single'
-                            ? Boolean(pendingFilters.filterDateStart)
-                            : Boolean(pendingFilters.filterDateStart || pendingFilters.filterDateEnd)) ? (
-                              <TouchableOpacity onPress={() => { setPendingFilters((current) => ({ ...current, filterDateStart: '', filterDateEnd: '' })); setFilterDatePickerField(null); }}>
-                              <Text style={styles.dateFilterClear}>Limpar datas</Text>
-                            </TouchableOpacity>
-                          ) : null}
-                        </View>
+                                      } else {
+                                        setFilterDateDraft(date);
+                                      }
+                                    }}
+                                    onDismiss={() => setFilterDatePickerField(null)}
+                                  />
+                                  {Platform.OS !== 'android' && (
+                                    <View style={styles.datePickerPanel}>
+                                      <View style={styles.datePickerActions}>
+                                        <TouchableOpacity style={styles.datePickerCancel} onPress={() => setFilterDatePickerField(null)}>
+                                          <Text style={styles.datePickerCancelText}>Cancelar</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={styles.datePickerConfirm}
+                                          onPress={() => {
+                                            updateFilterDate(filterDatePickerField, filterDateDraft);
+                                            setFilterDatePickerField(null);
+                                          }}
+                                        >
+                                          <Text style={styles.datePickerDoneText}>Confirmar</Text>
+                                        </TouchableOpacity>
+                                      </View>
+                                    </View>
+                                  )}
+                                </>
+                              ) : null}
+                              {pendingFilters && (pendingFilters.filterDateMode === 'single'
+                                ? Boolean(pendingFilters.filterDateStart)
+                                : Boolean(pendingFilters.filterDateStart || pendingFilters.filterDateEnd)) ? (
+                                  <TouchableOpacity onPress={() => {
+                                    setPendingFilters((current) => ({ ...current, filterDateStart: '', filterDateEnd: '' }));
+                                    setFilterDatePickerField(null);
+                                  }}>
+                                    <Text style={styles.dateFilterClear}>Limpar datas</Text>
+                                  </TouchableOpacity>
+                                ) : null}
+                            </View>
                           </ScrollView>
                           <TouchableOpacity
                             style={styles.filterApplyButton}
