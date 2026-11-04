@@ -1,8 +1,6 @@
 import DateTimePicker from '@expo/ui/community/datetime-picker';
-<<<<<<< Updated upstream
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-=======
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,7 +15,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
->>>>>>> Stashed changes
 import { StatusBar } from 'expo-status-bar';
 import { getApps, initializeApp } from 'firebase/app';
 import {
@@ -50,19 +47,6 @@ import {
   updateDoc,
   writeBatch
 } from 'firebase/firestore';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import ButtonPrimary from './src/components/ButtonPrimary';
 import TextField from './src/components/TextField';
@@ -935,10 +919,6 @@ export default function App() {
           setIsSavingProfile(false);
         }
       };
-  const openProfile = useCallback(() => {
-    navigateTo('profile');
-  }, [navigateTo]);
-
   const handleRegister = async () => {
     if (!fullName.trim() || !email.trim() || !password.trim()) {
       setStatus({ type: 'error', text: 'Preencha nome completo, e-mail e senha para cadastrar.' });
@@ -1631,7 +1611,11 @@ export default function App() {
   const displayedItems = useMemo(() => {
     const items = itemListFilter === 'all' ? filteredItems : filteredItemsByType[itemListFilter];
     if (oldItemFilter === 'all') {
-      return items;
+      return [...items].sort((firstItem, secondItem) => {
+        const firstIsOldLost = getOldItemLabel(firstItem, currentTime) === 'Perdido há muito tempo';
+        const secondIsOldLost = getOldItemLabel(secondItem, currentTime) === 'Perdido há muito tempo';
+        return Number(secondIsOldLost) - Number(firstIsOldLost);
+      });
     }
     const expectedLabel = oldItemFilter === 'lost'
       ? 'Perdido há muito tempo'
@@ -1738,63 +1722,17 @@ export default function App() {
           <StatusBar style="dark" />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
             <View style={styles.appShell}>
-              <ScrollView
-                ref={scrollViewRef}
-                style={styles.screenScroll}
-                contentContainerStyle={styles.container}
-                keyboardShouldPersistTaps="handled"
-                onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
-                scrollEventThrottle={16}
-              >
-                {activeView === 'items' && (
-                  <>
-<<<<<<< Updated upstream
-                    <View style={styles.homeHeader}>
-                      <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
-                      <View style={styles.homeHeaderMain}>
-                        <Text style={styles.title}>Itens</Text>
-                        <TouchableOpacity
-                          style={styles.homeProfileButton}
-                          onPress={() => navigateTo('profile')}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Abrir perfil de ${userFirstName}`}
-                        >
-                          <Text style={styles.homeProfileName} numberOfLines={1}>
-                            {userFirstName}
-                          </Text>
-                          <Image
-                            source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
-                            style={styles.homeProfileAvatar}
-                            resizeMode="cover"
-                          />
-                        </TouchableOpacity>
-                      </View>
-=======
-                    <TouchableOpacity
-                      style={styles.homeProfileButton}
-                      onPress={() => navigateTo('profile')}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
-                    >
-                      <Text style={styles.homeProfileName} numberOfLines={1}>
-                        {userFirstName}
-                      </Text>
-                      <Image
-                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
-                        style={styles.homeProfileAvatar}
-                        resizeMode="cover"
+              {activeView === 'items' && (
+                <View style={styles.stickyHeader}>
+                  <Text style={styles.stickyHeaderBrand}>Acha ai!</Text>
+                  <View style={styles.stickyHeaderActions}>
+                    <View style={[styles.searchBox, styles.stickySearchBox]}>
+                      <TextInput
+                        style={styles.searchInput}
+                        placeholder="Buscar por nome, local..."
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
                       />
-                    </TouchableOpacity>
-                    <Text style={styles.eyebrow}>ACHADOS &amp; PERDIDOS</Text>
-                    <Text style={styles.title}>Itens</Text>
-                    <View style={styles.myItemsFilterRow}>
-                      <Text style={styles.filterSummary}>
-                        {itemListFilter === 'all' ? 'Todos' : itemListFilter === 'lost' ? 'Perdidos' : itemListFilter === 'found' ? 'Achados' : 'Recuperados'}
-                      </Text>
->>>>>>> Stashed changes
-                    </View>
-                    <View style={styles.searchBox}>
-                      <TextInput style={styles.searchInput} placeholder="Buscar por nome, local..." value={searchQuery} onChangeText={setSearchQuery} />
                       <TouchableOpacity
                         style={[styles.categoryFilterButton, showFilters && styles.categoryFilterButtonActive]}
                         onPress={openFilters}
@@ -1805,32 +1743,48 @@ export default function App() {
                         <Text style={styles.filterButtonIcon}>☷</Text>
                       </TouchableOpacity>
                     </View>
-<<<<<<< Updated upstream
-                    <View style={styles.myItemsFilterRow}>
-                      {[
-                        { key: 'all', label: 'Todos' },
-                        { key: 'lost', label: 'Perdidos' },
-                        { key: 'found', label: 'Achados' },
-                        { key: 'recovered', label: 'Recuperados' },
-                      ].map((filter) => (
-                        <TouchableOpacity
-                          key={filter.key}
-                          style={[styles.myItemsFilter, itemListFilter === filter.key && styles.myItemsFilterActive]}
-                          onPress={() => {
-                            setItemListFilter(filter.key);
-                            setOldItemFilter('all');
-                          }}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: itemListFilter === filter.key }}
-                        >
-                          <Text style={[styles.myItemsFilterText, itemListFilter === filter.key && styles.myItemsFilterTextActive]}>
-                            {filter.label}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                    {showSearchFilters && (
-=======
+                    <TouchableOpacity
+                      style={styles.headerNotificationButton}
+                      onPress={() => navigateTo('notifications')}
+                      accessibilityRole="button"
+                      accessibilityLabel={unreadNotificationCount
+                        ? `Notificações, ${unreadNotificationCount} não lidas`
+                        : 'Notificações'}
+                      accessibilityState={{ selected: activeNavigationView === 'notifications' }}
+                    >
+                      <Text style={styles.headerNotificationIcon}>🔔︎</Text>
+                      {unreadNotificationCount > 0 ? (
+                        <View style={styles.notificationBadge}>
+                          <Text style={styles.notificationBadgeText}>{unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}</Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.homeProfileButton}
+                      onPress={() => navigateTo('profile')}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
+                    >
+                      <Text style={styles.homeProfileName} numberOfLines={1}>{userFirstName}</Text>
+                      <Image
+                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
+                        style={styles.homeProfileAvatar}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.screenScroll}
+                contentContainerStyle={styles.container}
+                keyboardShouldPersistTaps="handled"
+                onScroll={(event) => setShowScrollTop(event.nativeEvent.contentOffset.y > 220)}
+                scrollEventThrottle={16}
+              >
+                {activeView === 'items' && (
+                  <>
                     <Modal
                       visible={showFilters}
                       transparent
@@ -1888,7 +1842,6 @@ export default function App() {
                             ))}
                           </ScrollView>
                           <ScrollView style={styles.filterModalScroll} showsVerticalScrollIndicator={false}>
->>>>>>> Stashed changes
                       <View style={styles.searchFilterPanel}>
                         <Text style={styles.searchFilterTitle}>Tempo</Text>
                         <ScrollView horizontal contentContainerStyle={styles.categoryRow} showsHorizontalScrollIndicator={false}>
@@ -2125,8 +2078,21 @@ export default function App() {
 
                 {activeView === 'notifications' && (
                   <View style={styles.notificationsScreen}>
-                    <Text style={styles.title}>Notificações</Text>
-                    <Text style={styles.listDescription}>Atualizações dos seus itens e conversas.</Text>
+                    <View style={styles.notificationsTopBar}>
+                      <TouchableOpacity style={styles.backButton} onPress={() => navigateTo('items')} accessibilityLabel="Voltar para itens">
+                        <Text style={styles.backButtonText}>‹</Text>
+                      </TouchableOpacity>
+                      <View style={styles.notificationsHeading}>
+                        <Text style={styles.notificationsTitle}>Notificações</Text>
+                        <Text style={styles.notificationsSubtitle}>Atualizações dos seus itens e conversas.</Text>
+                      </View>
+                    </View>
+                    {unreadNotificationCount > 0 ? (
+                      <View style={styles.notificationsSummary}>
+                        <Text style={styles.notificationsSummaryIcon}>🔔</Text>
+                        <Text style={styles.notificationsSummaryText}>{unreadNotificationCount} {unreadNotificationCount === 1 ? 'aviso não lido' : 'avisos não lidos'}</Text>
+                      </View>
+                    ) : null}
                     {notificationsError ? <Text style={styles.errorText}>{notificationsError}</Text> : null}
                     {notifications.length === 0 && !notificationsError ? (
                       <View style={styles.emptyNotifications}>
@@ -2157,19 +2123,24 @@ export default function App() {
 
                 {activeView === 'profile' && (
                   <View style={styles.profileScreen}>
-                    <Text style={styles.title}>Meu perfil</Text>
-                    <Text style={styles.profileTypeTitle}>{getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}</Text>
-                    <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading}>
-                      <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
-                    </TouchableOpacity>
-                    <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
-                    <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
-                    <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('notifications')}>
-                      <Text style={styles.profileActionTitle}>Notificações</Text>
-                      {unreadNotificationCount > 0 ? (
-                        <Text style={styles.notificationProfileCount}>{unreadNotificationCount} não lidas</Text>
-                      ) : null}
-                    </TouchableOpacity>
+                    <View style={styles.profileTopBar}>
+                      <TouchableOpacity style={styles.backButton} onPress={() => navigateTo('items')} accessibilityLabel="Voltar para itens">
+                        <Text style={styles.backButtonText}>‹</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.profileTopBarTitle}>Perfil</Text>
+                      <View style={styles.profileTopBarSpacer} />
+                    </View>
+                    <View style={styles.profileHero}>
+                      <Text style={styles.profilePageTitle}>Meu perfil</Text>
+                      <View style={styles.profileIdentity}>
+                        <TouchableOpacity onPress={handlePickProfileImage} disabled={isUploading} accessibilityLabel="Alterar foto do perfil">
+                          <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileImageHome} resizeMode="cover" />
+                        </TouchableOpacity>
+                        <Text style={styles.userText}>{profileName || user.displayName || 'Minha conta'}</Text>
+                        <Text style={styles.profileTypeTitle}>{getAccountType(user.email) === 'server' ? 'Perfil do Servidor' : 'Perfil do Aluno'}</Text>
+                        <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
+                      </View>
+                    </View>
                     <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('myItems')}><Text style={styles.profileActionTitle}>Meus itens</Text></TouchableOpacity>
                     <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}><Text style={styles.profileActionTitle}>Configurações</Text></TouchableOpacity>
                   </View>
@@ -2346,50 +2317,19 @@ export default function App() {
               </ScrollView>
               {(isItemListView || showScrollTop) && (
                 <View style={styles.floatingActions}>
-                  {isItemListView ? <TouchableOpacity style={styles.floatingAddButton} onPress={() => { setItemType('lost'); navigateTo('addItem'); }}><Text style={styles.floatingAddButtonText}>+</Text></TouchableOpacity> : null}
+                  {isItemListView ? (
+                    <TouchableOpacity
+                      style={styles.floatingAddButton}
+                      onPress={() => { setItemType('lost'); navigateTo('addItem'); }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cadastrar item"
+                    >
+                      <Text style={styles.floatingAddButtonText}>+</Text>
+                    </TouchableOpacity>
+                  ) : null}
                   {showScrollTop ? <TouchableOpacity style={styles.scrollTopButton} onPress={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}><Text style={styles.scrollTopText}>↑</Text></TouchableOpacity> : null}
                 </View>
               )}
-              <View style={styles.bottomBar}>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'items' && styles.bottomNavButtonActive]}
-                  onPress={() => navigateTo('items')}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: activeNavigationView === 'items' }}
-                >
-                  <Text style={[styles.bottomNavText, activeNavigationView === 'items' && styles.bottomNavTextActive]}>Itens</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'notifications' && styles.bottomNavButtonActive]}
-                  onPress={() => navigateTo('notifications')}
-                  accessibilityRole="button"
-                  accessibilityLabel={unreadNotificationCount
-                    ? `Notificações, ${unreadNotificationCount} não lidas`
-                    : 'Notificações'}
-                  accessibilityState={{ selected: activeNavigationView === 'notifications' }}
-                >
-                  <View style={styles.notificationNavContent}>
-                    <View style={styles.notificationNavIconWrap}>
-                      <Text style={[styles.notificationNavIcon, activeNavigationView === 'notifications' && styles.bottomNavTextActive]}>🔔</Text>
-                      {unreadNotificationCount > 0 ? (
-                        <View style={styles.notificationBadge}>
-                          <Text style={styles.notificationBadgeText}>{unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                    <Text style={[styles.bottomNavText, activeNavigationView === 'notifications' && styles.bottomNavTextActive]}>Avisos</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.bottomNavButton, activeNavigationView === 'profile' && styles.bottomNavButtonActive]}
-                  onPress={openProfile}
-                  accessibilityRole="button"
-                  accessibilityLabel="Perfil"
-                  accessibilityState={{ selected: activeNavigationView === 'profile' }}
-                >
-                  <Image source={profileImage ? { uri: profileImage } : DEFAULT_PROFILE_IMAGE} style={styles.profileAvatar} resizeMode="cover" />
-                </TouchableOpacity>
-              </View>
             </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
@@ -2445,6 +2385,45 @@ const styles = StyleSheet.create({
   },
   screenScroll: {
     flex: 1,
+  },
+  stickyHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 10,
+    backgroundColor: theme.colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8E4EC',
+    elevation: theme.elevation.low,
+    zIndex: 2,
+  },
+  stickyHeaderBrand: {
+    marginBottom: 8,
+    color: theme.colors.primary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  stickyHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+  },
+  headerNotificationButton: {
+    position: 'relative',
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: theme.shape.medium,
+    backgroundColor: 'transparent',
+  },
+  headerNotificationIcon: {
+    color: theme.colors.primary,
+    fontSize: 20,
+  },
+  stickySearchBox: {
+    flex: 1,
+    minWidth: 0,
+    marginBottom: 0,
   },
   safeArea: {
     flex: 1,
@@ -2755,7 +2734,7 @@ const styles = StyleSheet.create({
   floatingActions: {
     position: 'absolute',
     right: 16,
-    bottom: 78,
+    bottom: 20,
     alignItems: 'flex-end',
     gap: 10,
   },
@@ -2851,6 +2830,43 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 620,
     alignSelf: 'center',
+  },
+  notificationsTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  notificationsHeading: {
+    flex: 1,
+    marginLeft: 8,
+  },
+  notificationsTitle: {
+    color: theme.colors.onSurface,
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  notificationsSubtitle: {
+    marginTop: 3,
+    color: theme.colors.secondaryText,
+    fontSize: 13,
+  },
+  notificationsSummary: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingHorizontal: 14,
+    borderRadius: theme.shape.medium,
+    backgroundColor: theme.colors.surfaceVariant,
+  },
+  notificationsSummaryIcon: {
+    marginRight: 8,
+    fontSize: 17,
+  },
+  notificationsSummaryText: {
+    color: theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
   },
   emptyNotifications: {
     alignItems: 'center',
@@ -3801,6 +3817,21 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     alignSelf: 'center',
     alignItems: 'center',
+  },
+  profileTopBar: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  profileTopBarTitle: {
+    color: theme.colors.onSurface,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  profileTopBarSpacer: {
+    width: 42,
   },
   profileHero: {
     width: '100%',
