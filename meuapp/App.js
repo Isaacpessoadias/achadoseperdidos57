@@ -31,9 +31,11 @@ import {
   getDocs,
   getFirestore,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -484,6 +486,8 @@ export default function App() {
   const [activeView, setActiveView] = useState('items');
   const [notifications, setNotifications] = useState([]);
   const [notificationsError, setNotificationsError] = useState('');
+  const [serverFoundRequests, setServerFoundRequests] = useState([]);
+  const [serverRequestsError, setServerRequestsError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [showFilters, setShowFilters] = useState(false);
@@ -552,6 +556,17 @@ export default function App() {
     ? 'profile'
     : activeView === 'notifications' ? 'notifications' : 'items';
   const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
+  const isServerUser = getAccountType(user?.email) === 'server';
+  const serverFoundRequestCount = isServerUser ? serverFoundRequests.length : 0;
+  const notificationBadgeCount = unreadNotificationCount + serverFoundRequestCount;
+  const notificationSummary = [
+    unreadNotificationCount
+      ? `${unreadNotificationCount} ${unreadNotificationCount === 1 ? 'aviso não lido' : 'avisos não lidos'}`
+      : '',
+    serverFoundRequestCount
+      ? `${serverFoundRequestCount} ${serverFoundRequestCount === 1 ? 'solicitação pendente' : 'solicitações pendentes'}`
+      : '',
+  ].filter(Boolean).join(' · ');
   const userFirstName = (profileName || user?.displayName || '').trim().split(/\s+/)[0] || 'Minha conta';
   const canManageSelectedItem = getAccountType(user?.email) === 'server';
   const canViewRecoveryPerson = getAccountType(user?.email) === 'server'
@@ -818,6 +833,34 @@ export default function App() {
   }, [user?.uid]);
 
   useEffect(() => {
+    if (!user?.uid || getAccountType(user.email) !== 'server') {
+      return undefined;
+    }
+
+    return onSnapshot(
+      query(
+        collection(db, 'notificationRequests'),
+        where('status', '==', 'pending'),
+      ),
+      (snapshot) => {
+        const pendingRequests = snapshot.docs
+          .map((requestSnapshot) => ({
+            id: requestSnapshot.id,
+            ...requestSnapshot.data(),
+          }))
+          .sort((first, second) => (
+            getTimestampMillis(second.createdAt) - getTimestampMillis(first.createdAt)
+          ));
+        setServerFoundRequests(pendingRequests);
+        setServerRequestsError('');
+      },
+      (error) => {
+        setServerRequestsError(getFirestoreError(error, 'carregar as solicitações de achados'));
+      },
+    );
+  }, [user?.uid, user?.email]);
+
+  useEffect(() => {
     const loginSuccessMessage = 'Login realizado com sucesso!';
     if (status.type !== 'success' || status.text !== loginSuccessMessage) {
       return undefined;
@@ -1067,6 +1110,8 @@ export default function App() {
     try {
       await signOut(auth);
       setUser(null);
+      setServerFoundRequests([]);
+      setServerRequestsError('');
       setProfileImage(null);
       setProfileName('');
       navigateTo('items');
@@ -1471,6 +1516,28 @@ export default function App() {
     navigateTo('itemDetail');
   };
 
+  const handleOpenServerFoundRequest = async (request) => {
+    let item = foundItems.find((foundItem) => foundItem.id === request.itemId);
+    if (!item) {
+      try {
+        const itemSnapshot = await getDoc(doc(db, 'items', request.itemId));
+        item = itemSnapshot.exists() ? { id: itemSnapshot.id, ...itemSnapshot.data() } : null;
+      } catch (error) {
+        setServerRequestsError(getFirestoreError(error, 'abrir o item desta solicitação'));
+        return;
+      }
+    }
+
+    if (!item) {
+      setServerRequestsError('O item desta solicitação não está mais disponível.');
+      return;
+    }
+
+    setServerRequestsError('');
+    setSelectedItem(item);
+    navigateTo('itemDetail');
+  };
+
   const handleReportItemFound = async () => {
     const accountType = getAccountType(user?.email);
     const reportKey = user?.uid && selectedItem?.id ? `${user.uid}:${selectedItem.id}` : '';
@@ -1503,7 +1570,7 @@ export default function App() {
       setReportedFoundItemIds((currentIds) => new Set(currentIds).add(reportKey));
       setStatus({
         type: 'success',
-        text: 'Solicitação registrada no Firestore. A notificação e a visualização para servidores ainda não estão configuradas neste projeto.',
+        text: 'Solicitação registrada. Os servidores já podem visualizá-la nas notificações.',
       });
     } catch (error) {
       const message = error?.code === 'permission-denied'
@@ -1605,8 +1672,17 @@ export default function App() {
     };
 
     try {
+      const requestReference = doc(db, 'notificationRequests', selectedItem.id);
+      const requestSnapshot = await getDoc(requestReference);
       const batch = writeBatch(db);
       batch.update(doc(db, 'items', selectedItem.id), statusData);
+      if (requestSnapshot.exists() && requestSnapshot.data().status === 'pending') {
+        batch.update(requestReference, {
+          status: 'handled',
+          handledBy: user.uid,
+          handledAt: serverTimestamp(),
+        });
+      }
       if (selectedItem.userId && selectedItem.userId !== user.uid) {
         const actorName = profileName || user.displayName || user.email || 'Equipe de Achados e Perdidos';
         const notificationReference = doc(collection(db, 'profiles', selectedItem.userId, 'notifications'));
@@ -1806,7 +1882,22 @@ export default function App() {
             <View style={styles.appShell}>
               {activeView === 'items' && (
                 <View style={styles.stickyHeader}>
-                  <Text style={styles.stickyHeaderBrand}>Acha ai!</Text>
+                  <View style={styles.stickyHeaderTop}>
+                    <Text style={styles.stickyHeaderBrand}>Acha ai!</Text>
+                    <TouchableOpacity
+                      style={styles.homeProfileButton}
+                      onPress={() => navigateTo('profile')}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
+                    >
+                      <Text style={styles.homeProfileName} numberOfLines={1}>{userFirstName}</Text>
+                      <Image
+                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
+                        style={styles.homeProfileAvatar}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                  </View>
                   <View style={styles.stickyHeaderActions}>
                     <View style={[styles.searchBox, styles.stickySearchBox]}>
                       <TextInput
@@ -1829,30 +1920,17 @@ export default function App() {
                       style={styles.headerNotificationButton}
                       onPress={() => navigateTo('notifications')}
                       accessibilityRole="button"
-                      accessibilityLabel={unreadNotificationCount
-                        ? `Notificações, ${unreadNotificationCount} não lidas`
+                      accessibilityLabel={notificationBadgeCount
+                        ? `Notificações, ${unreadNotificationCount} não lidas e ${serverFoundRequestCount} solicitações pendentes`
                         : 'Notificações'}
                       accessibilityState={{ selected: activeNavigationView === 'notifications' }}
                     >
                       <Text style={styles.headerNotificationIcon}>🔔︎</Text>
-                      {unreadNotificationCount > 0 ? (
+                      {notificationBadgeCount > 0 ? (
                         <View style={styles.notificationBadge}>
-                          <Text style={styles.notificationBadgeText}>{unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}</Text>
+                          <Text style={styles.notificationBadgeText}>{notificationBadgeCount > 99 ? '99+' : notificationBadgeCount}</Text>
                         </View>
                       ) : null}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.homeProfileButton}
-                      onPress={() => navigateTo('profile')}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Abrir perfil de ${userFirstName}`}
-                    >
-                      <Text style={styles.homeProfileName} numberOfLines={1}>{userFirstName}</Text>
-                      <Image
-                        source={profileImage || user.photoURL ? { uri: profileImage || user.photoURL } : DEFAULT_PROFILE_IMAGE}
-                        style={styles.homeProfileAvatar}
-                        resizeMode="cover"
-                      />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -2177,21 +2255,55 @@ export default function App() {
                       </TouchableOpacity>
                       <View style={styles.notificationsHeading}>
                         <Text style={styles.notificationsTitle}>Notificações</Text>
-                        <Text style={styles.notificationsSubtitle}>Atualizações dos seus itens e conversas.</Text>
+                        <Text style={styles.notificationsSubtitle}>
+                          {isServerUser
+                            ? 'Atualizações dos itens e solicitações de achados.'
+                            : 'Atualizações dos seus itens e conversas.'}
+                        </Text>
                       </View>
                     </View>
-                    {unreadNotificationCount > 0 ? (
+                    {notificationSummary ? (
                       <View style={styles.notificationsSummary}>
                         <Text style={styles.notificationsSummaryIcon}>🔔</Text>
-                        <Text style={styles.notificationsSummaryText}>{unreadNotificationCount} {unreadNotificationCount === 1 ? 'aviso não lido' : 'avisos não lidos'}</Text>
+                        <Text style={styles.notificationsSummaryText}>{notificationSummary}</Text>
                       </View>
                     ) : null}
                     {notificationsError ? <Text style={styles.errorText}>{notificationsError}</Text> : null}
-                    {notifications.length === 0 && !notificationsError ? (
+                    {notifications.length === 0
+                      && serverFoundRequestCount === 0
+                      && !notificationsError
+                      && !serverRequestsError ? (
                       <View style={styles.emptyNotifications}>
                         <Text style={styles.emptyNotificationsIcon}>🔔</Text>
                         <Text style={styles.emptyNotificationsTitle}>Tudo em dia</Text>
                         <Text style={styles.emptyNotificationsText}>Avisaremos quando um item seu mudar de status, receber um comentário ou alguém responder ao seu.</Text>
+                      </View>
+                    ) : null}
+                    {isServerUser ? (
+                      <View style={styles.serverRequestsSection}>
+                        <Text style={styles.serverRequestsTitle}>Solicitações de itens encontrados</Text>
+                        {serverRequestsError ? <Text style={styles.errorText}>{serverRequestsError}</Text> : null}
+                        {serverFoundRequests.length === 0 && !serverRequestsError ? (
+                          <Text style={styles.serverRequestsEmpty}>Não há solicitações pendentes.</Text>
+                        ) : null}
+                        {serverFoundRequests.map((request) => {
+                          const requestedItem = foundItems.find((item) => item.id === request.itemId);
+                          return (
+                            <TouchableOpacity
+                              key={request.id}
+                              style={[styles.notificationCard, styles.serverRequestCard]}
+                              onPress={() => handleOpenServerFoundRequest(request)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Abrir solicitação para ${requestedItem?.name || 'item informado'}`}
+                            >
+                              <Text style={styles.notificationTitle}>Aviso de item encontrado</Text>
+                              <Text style={styles.notificationItemName}>{requestedItem?.name || 'Item informado'}</Text>
+                              <Text style={styles.notificationBody}>Um usuário informou que encontrou este item. Toque para analisar.</Text>
+                              <Text style={styles.notificationDate}>{formatDateTime(request.createdAt)}</Text>
+                              <Text style={styles.serverRequestAction}>Ver solicitação ›</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
                     ) : null}
                     {notifications.map((notification) => (
@@ -2234,8 +2346,30 @@ export default function App() {
                         <Text style={styles.profileEmail}>{formatDisplayEmail(user.email)}</Text>
                       </View>
                     </View>
-                    <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('myItems')}><Text style={styles.profileActionTitle}>Meus itens</Text></TouchableOpacity>
-                    <TouchableOpacity style={styles.profileAction} onPress={() => navigateTo('settings')}><Text style={styles.profileActionTitle}>Configurações</Text></TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.profileAction}
+                      onPress={() => navigateTo('myItems')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Abrir meus itens"
+                    >
+                      <View style={styles.profileActionContent}>
+                        <Text style={styles.profileActionTitle}>Meus itens</Text>
+                        <Text style={styles.profileActionSubtitle}>Veja seus itens perdidos e encontrados</Text>
+                      </View>
+                      <Text style={styles.actionArrow}>›</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.profileAction}
+                      onPress={() => navigateTo('settings')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Abrir configurações"
+                    >
+                      <View style={styles.profileActionContent}>
+                        <Text style={styles.profileActionTitle}>Configurações</Text>
+                        <Text style={styles.profileActionSubtitle}>Altere seu nome, e-mail ou senha</Text>
+                      </View>
+                      <Text style={styles.actionArrow}>›</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
 
@@ -2276,16 +2410,111 @@ export default function App() {
                   <View>
                     <TouchableOpacity style={styles.backButton} onPress={() => navigateTo('profile')}><Text style={styles.backButtonText}>‹</Text></TouchableOpacity>
                     <Text style={styles.title}>Configurações</Text>
-                    <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('name')}><Text>Nome: {profileName || user.displayName}</Text></TouchableOpacity>
-                    <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('email')}><Text>E-mail: {formatDisplayEmail(user.email)}</Text></TouchableOpacity>
-                    <TouchableOpacity style={styles.settingsOption} onPress={() => startEditingProfileField('password')}><Text>Alterar senha</Text></TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.settingsOption, editingProfileField === 'name' && styles.settingsOptionActive]}
+                      onPress={() => startEditingProfileField('name')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Editar nome do perfil"
+                    >
+                      <View style={styles.settingsOptionContent}>
+                        <Text style={styles.settingsOptionTitle}>Nome</Text>
+                        <Text style={styles.settingsOptionValue} numberOfLines={1}>
+                          {profileName || user.displayName || 'Adicionar nome'}
+                        </Text>
+                      </View>
+                      <Text style={styles.settingsEditLabel}>EDITAR ›</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.settingsOption, editingProfileField === 'email' && styles.settingsOptionActive]}
+                      onPress={() => startEditingProfileField('email')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Editar e-mail da conta"
+                    >
+                      <View style={styles.settingsOptionContent}>
+                        <Text style={styles.settingsOptionTitle}>E-mail</Text>
+                        <Text style={styles.settingsOptionValue} numberOfLines={1}>
+                          {formatDisplayEmail(user.email)}
+                        </Text>
+                      </View>
+                      <Text style={styles.settingsEditLabel}>EDITAR ›</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.settingsOption, editingProfileField === 'password' && styles.settingsOptionActive]}
+                      onPress={() => startEditingProfileField('password')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Alterar senha da conta"
+                    >
+                      <View style={styles.settingsOptionContent}>
+                        <Text style={styles.settingsOptionTitle}>Segurança da conta</Text>
+                        <Text style={styles.settingsOptionValue}>Alterar senha</Text>
+                      </View>
+                      <Text style={styles.settingsEditLabel}>EDITAR ›</Text>
+                    </TouchableOpacity>
                     {editingProfileField ? (
                       <View style={styles.profileEditForm}>
-                        {editingProfileField === 'name' ? <TextInput style={styles.input} placeholder="Seu nome" value={profileNameDraft} onChangeText={setProfileNameDraft} /> : null}
-                        {editingProfileField === 'email' ? <TextInput style={styles.input} placeholder="Novo e-mail" value={profileEmailDraft} onChangeText={setProfileEmailDraft} /> : null}
-                        {editingProfileField === 'password' ? <TextInput style={styles.input} placeholder="Nova senha" value={newPassword} onChangeText={setNewPassword} secureTextEntry /> : null}
-                        {editingProfileField !== 'name' ? <TextInput style={styles.input} placeholder="Senha atual" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry /> : null}
-        <ButtonPrimary onPress={handleSaveProfileField} style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]} disabled={isSavingProfile}> {isSavingProfile ? <ActivityIndicator color="#fff" /> : 'Salvar alteração'} </ButtonPrimary>
+                        <Text style={styles.profileEditTitle}>
+                          {editingProfileField === 'name' ? 'Alterar nome' : editingProfileField === 'email' ? 'Alterar e-mail' : 'Alterar senha'}
+                        </Text>
+                        <Text style={styles.profileEditHint}>
+                          {editingProfileField === 'name'
+                            ? 'Informe como seu nome deve aparecer no perfil.'
+                            : editingProfileField === 'email'
+                              ? 'Informe o novo e-mail da sua conta.'
+                              : 'Confirme sua senha atual e escolha uma nova senha.'}
+                        </Text>
+                        {editingProfileField === 'name' ? (
+                          <>
+                            <Text style={styles.profileInputLabel}>Novo nome</Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="Digite seu novo nome"
+                              placeholderTextColor={theme.colors.secondaryText}
+                              value={profileNameDraft}
+                              onChangeText={setProfileNameDraft}
+                            />
+                          </>
+                        ) : null}
+                        {editingProfileField === 'email' ? (
+                          <>
+                            <Text style={styles.profileInputLabel}>Novo e-mail</Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="Digite seu novo e-mail"
+                              placeholderTextColor={theme.colors.secondaryText}
+                              value={profileEmailDraft}
+                              onChangeText={setProfileEmailDraft}
+                            />
+                          </>
+                        ) : null}
+                        {editingProfileField === 'password' ? (
+                          <>
+                            <Text style={styles.profileInputLabel}>Nova senha</Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="Mínimo de 6 caracteres"
+                              placeholderTextColor={theme.colors.secondaryText}
+                              value={newPassword}
+                              onChangeText={setNewPassword}
+                              secureTextEntry
+                            />
+                          </>
+                        ) : null}
+                        {editingProfileField !== 'name' ? (
+                          <>
+                            <Text style={styles.profileInputLabel}>Senha atual</Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="Digite sua senha atual"
+                              placeholderTextColor={theme.colors.secondaryText}
+                              value={currentPassword}
+                              onChangeText={setCurrentPassword}
+                              secureTextEntry
+                            />
+                          </>
+                        ) : null}
+                        <ButtonPrimary onPress={handleSaveProfileField} style={[styles.buttonPrimary, isSavingProfile && styles.buttonDisabled]} disabled={isSavingProfile}>
+                          {isSavingProfile ? <ActivityIndicator color="#fff" /> : 'Salvar alteração'}
+                        </ButtonPrimary>
                       </View>
                     ) : null}
                     <TouchableOpacity style={styles.buttonLogout} onPress={handleLogout}><Text style={styles.buttonLogoutText}>Sair da conta</Text></TouchableOpacity>
@@ -2489,8 +2718,13 @@ const styles = StyleSheet.create({
     elevation: theme.elevation.low,
     zIndex: 2,
   },
-  stickyHeaderBrand: {
+  stickyHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 8,
+  },
+  stickyHeaderBrand: {
     color: theme.colors.primary,
     fontSize: 20,
     fontWeight: '800',
@@ -2647,6 +2881,7 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     backgroundColor: theme.colors.surfaceVariant,
+    transform: [{ translateY: -5 }],
   },
   profileAvatar: {
     width: 32,
@@ -2984,6 +3219,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     textAlign: 'center',
+  },
+  serverRequestsSection: {
+    marginBottom: theme.spacing.md,
+  },
+  serverRequestsTitle: {
+    marginBottom: theme.spacing.sm,
+    color: theme.colors.onSurface,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  serverRequestsEmpty: {
+    padding: 14,
+    borderRadius: theme.shape.medium,
+    backgroundColor: theme.colors.surfaceVariant,
+    color: theme.colors.secondaryText,
+  },
+  serverRequestCard: {
+    borderColor: theme.colors.primary,
+    backgroundColor: '#F7F3FF',
+  },
+  serverRequestAction: {
+    marginTop: theme.spacing.sm,
+    color: theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
   },
   notificationCard: {
     marginBottom: 10,
@@ -3982,19 +4242,25 @@ const styles = StyleSheet.create({
   },
   profileAction: {
     width: '100%',
-    minHeight: 82,
+    minHeight: 86,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surfaceVariant,
     borderWidth: 1,
     borderColor: theme.colors.outline,
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.primary,
     borderRadius: theme.shape.large,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     marginBottom: 12,
   },
+  profileActionContent: {
+    flex: 1,
+    paddingRight: theme.spacing.sm,
+  },
   profileActionTitle: {
-    color: '#27232E',
+    color: theme.colors.onSurface,
     fontSize: 17,
     fontWeight: '700',
   },
@@ -4007,6 +4273,7 @@ const styles = StyleSheet.create({
     color: theme.colors.secondaryText,
     fontSize: 12,
     marginTop: theme.spacing.xs,
+    lineHeight: 16,
   },
   actionArrow: {
     color: theme.colors.primary,
@@ -4027,15 +4294,44 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   settingsOption: {
-    minHeight: 56,
+    minHeight: 72,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: theme.spacing.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 10,
+    backgroundColor: theme.colors.surfaceVariant,
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.primary,
+    borderRadius: theme.shape.large,
+  },
+  settingsOptionActive: {
+    backgroundColor: '#E8DFF7',
+    borderColor: theme.colors.primary,
+  },
+  settingsOptionContent: {
+    flex: 1,
+    minWidth: 0,
   },
   settingsEditLabel: {
     color: theme.colors.primary,
     fontSize: 13,
+    fontWeight: '700',
+    flexShrink: 0,
+  },
+  settingsOptionTitle: {
+    color: theme.colors.secondaryText,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 3,
+  },
+  settingsOptionValue: {
+    color: theme.colors.onSurface,
+    fontSize: 15,
     fontWeight: '700',
   },
   profileEditForm: {
@@ -4045,6 +4341,24 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.outline,
     padding: 16,
     marginTop: 14,
+  },
+  profileEditTitle: {
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.titleLarge.fontSize,
+    fontWeight: '700',
+    marginBottom: theme.spacing.xs,
+  },
+  profileEditHint: {
+    color: theme.colors.secondaryText,
+    fontSize: theme.typography.labelMedium.fontSize,
+    lineHeight: theme.typography.labelMedium.lineHeight,
+    marginBottom: theme.spacing.md,
+  },
+  profileInputLabel: {
+    marginBottom: theme.spacing.xs,
+    color: theme.colors.onSurface,
+    fontSize: theme.typography.labelMedium.fontSize,
+    fontWeight: '700',
   },
   cancelEditText: {
     color: theme.colors.secondaryText,
