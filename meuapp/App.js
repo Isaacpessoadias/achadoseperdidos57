@@ -812,6 +812,7 @@ export default function App() {
       return undefined;
     }
 
+    let hasLoadedNotifications = false;
     return onSnapshot(
       collection(db, 'profiles', user.uid, 'notifications'),
       (snapshot) => {
@@ -823,6 +824,31 @@ export default function App() {
           .sort((first, second) => (
             getTimestampMillis(second.createdAt) - getTimestampMillis(first.createdAt)
           ));
+        if (hasLoadedNotifications && Platform.OS !== 'web') {
+          snapshot.docChanges()
+            .filter((change) => change.type === 'added')
+            .forEach((change) => {
+              const notification = change.doc.data();
+              Notifications.scheduleNotificationAsync({
+                content: {
+                  title: notification.title || 'Nova notificação',
+                  body: notification.body || '',
+                  sound: 'default',
+                  data: {
+                    origem: 'notificacao_interna',
+                    notificationId: change.doc.id,
+                    itemId: notification.itemId || '',
+                  },
+                  ...(Platform.OS === 'android' ? { channelId: 'default' } : {}),
+                },
+                trigger: null,
+              }).catch((error) => {
+                console.warn('Could not display an internal notification.', error);
+              });
+            });
+        } else {
+          hasLoadedNotifications = true;
+        }
         setNotifications(nextNotifications);
         setNotificationsError('');
       },
