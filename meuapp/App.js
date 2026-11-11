@@ -86,12 +86,16 @@ const registerForPushNotificationsAsync = async () => {
   }
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'Notificações',
-      importance: 6,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#16A34A',
-    });
+    try {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'Notificações',
+        importance: 6,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#16A34A',
+      });
+    } catch (error) {
+      console.warn('Could not configure the Android notification channel.', error);
+    }
   }
 
   let permissionStatus = (await Notifications.getPermissionsAsync()).status;
@@ -527,6 +531,7 @@ export default function App() {
   const [recoveredPersonEnrollment, setRecoveredPersonEnrollment] = useState('');
   const [recoveryPerson, setRecoveryPerson] = useState(null);
   const [recoveryPersonItemId, setRecoveryPersonItemId] = useState(null);
+  const expoPushTokenRegisteredRef = useRef(false);
 
   const [commentsError, setCommentsError] = useState('');
   const [pickupError, setPickupError] = useState('');
@@ -775,6 +780,7 @@ export default function App() {
     }
 
     let isActive = true;
+  expoPushTokenRegisteredRef.current = false;
     const registerDevice = async () => {
       try {
         const expoPushToken = await registerForPushNotificationsAsync();
@@ -789,8 +795,10 @@ export default function App() {
         await setDoc(doc(db, 'profiles', user.uid, 'devices', expoPushToken), {
           expoPushToken,
           platform: Platform.OS,
+          accountType: getAccountType(user.email),
           updatedAt: serverTimestamp(),
         }, { merge: true });
+        expoPushTokenRegisteredRef.current = true;
       } catch (error) {
         console.warn('Push notification registration failed.', error);
       }
@@ -816,15 +824,7 @@ export default function App() {
     return onSnapshot(
       collection(db, 'profiles', user.uid, 'notifications'),
       (snapshot) => {
-        const nextNotifications = snapshot.docs
-          .map((notificationSnapshot) => ({
-            id: notificationSnapshot.id,
-            ...notificationSnapshot.data(),
-          }))
-          .sort((first, second) => (
-            getTimestampMillis(second.createdAt) - getTimestampMillis(first.createdAt)
-          ));
-        if (hasLoadedNotifications && Platform.OS !== 'web') {
+        if (hasLoadedNotifications && Platform.OS !== 'web' && !expoPushTokenRegisteredRef.current) {
           snapshot.docChanges()
             .filter((change) => change.type === 'added')
             .forEach((change) => {
@@ -835,20 +835,25 @@ export default function App() {
                   body: notification.body || '',
                   sound: 'default',
                   data: {
-                    origem: 'notificacao_interna',
                     notificationId: change.doc.id,
                     itemId: notification.itemId || '',
                   },
-                  ...(Platform.OS === 'android' ? { channelId: 'default' } : {}),
                 },
                 trigger: null,
               }).catch((error) => {
-                console.warn('Could not display an internal notification.', error);
+                console.warn('Could not display a local fallback notification.', error);
               });
             });
-        } else {
-          hasLoadedNotifications = true;
         }
+        hasLoadedNotifications = true;
+        const nextNotifications = snapshot.docs
+          .map((notificationSnapshot) => ({
+            id: notificationSnapshot.id,
+            ...notificationSnapshot.data(),
+          }))
+          .sort((first, second) => (
+            getTimestampMillis(second.createdAt) - getTimestampMillis(first.createdAt)
+          ));
         setNotifications(nextNotifications);
         setNotificationsError('');
       },
@@ -863,12 +868,35 @@ export default function App() {
       return undefined;
     }
 
+    let hasLoadedRequests = false;
     return onSnapshot(
       query(
         collection(db, 'notificationRequests'),
         where('status', '==', 'pending'),
       ),
       (snapshot) => {
+        if (hasLoadedRequests && Platform.OS !== 'web' && !expoPushTokenRegisteredRef.current) {
+          snapshot.docChanges()
+            .filter((change) => change.type === 'added')
+            .forEach((change) => {
+              const request = change.doc.data();
+              Notifications.scheduleNotificationAsync({
+                content: {
+                  title: request.title || 'Novo item achado',
+                  body: request.body || 'Há uma nova solicitação de item achado.',
+                  sound: 'default',
+                  data: {
+                    requestId: change.doc.id,
+                    itemId: request.itemId || change.doc.id,
+                  },
+                },
+                trigger: null,
+              }).catch((error) => {
+                console.warn('Could not display a local fallback notification.', error);
+              });
+            });
+        }
+        hasLoadedRequests = true;
         const pendingRequests = snapshot.docs
           .map((requestSnapshot) => ({
             id: requestSnapshot.id,
@@ -1582,8 +1610,9 @@ export default function App() {
     foundNoticeInFlightRef.current.add(reportKey);
     setIsSendingFoundNotice(true);
     setStatus({ type: '', text: '' });
+    const requestReference = doc(db, 'notificationRequests', selectedItem.id);
     try {
-      await setDoc(doc(db, 'notificationRequests', selectedItem.id), {
+      await setDoc(requestReference, {
         itemId: selectedItem.id,
         recipientId: selectedItem.userId,
         createdBy: user.uid,
@@ -1599,10 +1628,30 @@ export default function App() {
         text: 'Solicitação registrada. Os servidores já podem visualizá-la nas notificações.',
       });
     } catch (error) {
-      const message = error?.code === 'permission-denied'
-        ? 'Não foi possível registrar. A solicitação pode já existir para este item ou as regras atuais podem bloquear a gravação.'
-        : getFirestoreError(error, 'registrar o aviso');
-      setStatus({ type: 'error', text: message });
+      if (error?.code === 'permission-denied') {
+        try {
+          const existingRequest = await getDoc(requestReference);
+          if (existingRequest.exists() && existingRequest.data().createdBy === user.uid) {
+            setReportedFoundItemIds((currentIds) => new Set(currentIds).add(reportKey));
+            setStatus({
+              type: 'success',
+              text: existingRequest.data().status === 'pending'
+                ? 'Sua solicitação já está registrada e aguarda a equipe.'
+                : 'Sua solicitação já foi atendida pela equipe.',
+            });
+            return;
+          }
+        } catch (readError) {
+          console.warn('Could not check the existing found-item request.', readError);
+        }
+
+        setStatus({
+          type: 'error',
+          text: 'O Firestore recusou a solicitação. Publique as regras atualizadas e tente novamente.',
+        });
+      } else {
+        setStatus({ type: 'error', text: getFirestoreError(error, 'registrar o aviso') });
+      }
     } finally {
       foundNoticeInFlightRef.current.delete(reportKey);
       setIsSendingFoundNotice(false);
