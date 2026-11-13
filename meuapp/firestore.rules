@@ -105,6 +105,15 @@ service cloud.firestore {
               && request.resource.data.itemName is string
               && getAfter(/databases/$(database)/documents/items/$(request.resource.data.itemId)).data.type == 'found'
               && getAfter(/databases/$(database)/documents/items/$(request.resource.data.itemId)).data.foundAtDaeeBy == request.auth.uid)
+            || (request.resource.data.type == 'item_found_request'
+              && request.resource.data.title == 'Relato de item encontrado'
+              && request.resource.data.body == 'Uma pessoa informou que encontrou seu item. A equipe ainda precisa confirmar.'
+              && request.resource.data.itemName == get(/databases/$(database)/documents/items/$(request.resource.data.itemId)).data.get('name', 'seu item')
+              && !exists(/databases/$(database)/documents/notificationRequests/$(request.resource.data.itemId))
+              && existsAfter(/databases/$(database)/documents/notificationRequests/$(request.resource.data.itemId))
+              && getAfter(/databases/$(database)/documents/notificationRequests/$(request.resource.data.itemId)).data.createdBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/notificationRequests/$(request.resource.data.itemId)).data.recipientId == userId
+              && getAfter(/databases/$(database)/documents/notificationRequests/$(request.resource.data.itemId)).data.status == 'pending')
             || (request.resource.data.type == 'item_recovered'
               && request.resource.data.title == 'Seu item foi recuperado'
               && request.resource.data.itemName is string
